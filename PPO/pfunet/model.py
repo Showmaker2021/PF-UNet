@@ -29,9 +29,11 @@ class SchedulingModel(nn.Module):
                  head_hidden=(128, 64),
                  critic_hidden: int = 128,
                  raw_dim: int = 7,
+                 rl_algo: str = 'ppo',
                  **kwargs):
         super().__init__()
         self.H, self.W = canvas_hw
+        self.rl_algo = rl_algo.lower()
         D = unet_channels[-1]
         
         self.unet = UNet2D(c_in, unet_channels, blocks_per_level, gn_groups)
@@ -41,7 +43,10 @@ class SchedulingModel(nn.Module):
         # Readout dimension: d0 channels + d1 channels + raw_dim + D
         rd = unet_channels[0] + unet_channels[1] + raw_dim + D  # 32 + 64 + 7 + 256 = 359
         self.head = MLP([rd, *head_hidden, 1])
-        self.critic = MLP([D, critic_hidden, 1])
+        if self.rl_algo == 'reinforce':
+            self.critic = None
+        else:
+            self.critic = MLP([D, critic_hidden, 1])
         
         self.decode_type = None
 
@@ -75,21 +80,14 @@ class SchedulingModel(nn.Module):
         features = torch.cat([f0, f1, obs.raw, gk], dim=-1)  # [B, M, J, 359]
         score = self.head(features).squeeze(-1)  # [B, M, J]
         logits = score.masked_fill(~obs.mask_pair, float('-inf'))
-        value = self.critic(g.mean(1)).squeeze(-1)  # [B]
+        value = self.critic(g.mean(1)).squeeze(-1) if self.critic is not None else None
         
         return logits, value
 
-    def forward(self, state, action=None):
+    def forward(self, state, action=None, return_all=None):
         """
         Forward pass matching ReSched SchedulingModel interface.
-        Args:
-            state: 8-tuple input from build_model_input
-            action: optional tuple (seq_id, machine_id) for teacher_forcing
-        Returns:
-            [seq_id, machine_id]: action chosen
-            prob_selected: probability of chosen action [B]
-            value: critic value estimate [B]
-            prob: full action probability distribution [B, N_rem, M]
+        Supports both PPO (4 outputs) and REINFORCE (2 outputs).
         """
         dev = next(self.parameters()).device
         state = [s.to(dev) if isinstance(s, torch.Tensor) else s for s in state]
@@ -100,7 +98,7 @@ class SchedulingModel(nn.Module):
         B, N, M = dur.shape
         
         obs = build_pf_obs(state)
-        logits, value = self.core(obs)  # [B, M, J], [B]
+        logits, value = self.core(obs)  # [B, M, J], [B] or None
         J = logits.shape[-1]
         
         # Map logits [B, M, J] -> probability distribution in env space [B, N_rem, M]
@@ -130,4 +128,11 @@ class SchedulingModel(nn.Module):
             raise ValueError(f"Unknown decode type: {self.decode_type}")
             
         prob_selected = prob[torch.arange(B, device=dur.device), seq_id, machine_id]
-        return [seq_id, machine_id], prob_selected, value, prob
+        
+        if return_all is None:
+            return_all = (self.rl_algo == 'ppo')
+            
+        if return_all:
+            return [seq_id, machine_id], prob_selected, value, prob
+        else:
+            return [seq_id, machine_id], prob_selected

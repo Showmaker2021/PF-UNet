@@ -93,7 +93,23 @@ runner_params = {
     },
 }
 
+PFUNET_PARAMS = {
+    'model_type': 'pfunet',
+    'rl_algo': 'reinforce',
+    'canvas_hw': (64, 64),
+    'c_in': 8,
+    'unet_channels': (32, 64, 128, 256),
+    'blocks_per_level': 2,
+    'gn_groups': 8,
+    'attn_layers': 2,
+    'attn_heads': 4,
+    'attn_ff': 512,
+    'head_hidden': (128, 64),
+    'raw_dim': 7,
+}
+
 model_params = {
+    'model_type': 'resched',  # default is ReSched baseline
     'action_space': 2,  # 0: processing-time ！= 0; 1: processing-time == 0
     'embedding_dim': 128,
     'block_num': 2,

@@ -18,6 +18,13 @@ from SchedulingEnvironment import (
     FFSPEnv,
 )
 from SchedulingModel import Model
+import sys
+import os
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ppo_dir = os.path.join(root_dir, 'PPO')
+if ppo_dir not in sys.path:
+    sys.path.insert(0, ppo_dir)
+from pfunet.model import SchedulingModel as PFUNetModel
 # from SchedulingModel_old import Model
 from REINFORCETrainer import Trainer
 from SchedulingEvaluator import validate_model
@@ -40,8 +47,15 @@ class Runner:
 
         self.device = self._configure_device()
         torch.set_default_dtype(torch.float32)
+        if self.device.type == 'cuda':
+            torch.set_default_device(self.device)
 
-        self.model = Model(**model_params)
+        mp = dict(model_params)
+        model_type = mp.pop('model_type', 'resched')
+        ModelCls = PFUNetModel if model_type == 'pfunet' else Model
+        self.model = ModelCls(**mp)
+        if model_type == 'pfunet':
+            self.model = self.model.to(self.device)
         self.test_only_flag = self.runner_params.get('test_only', False)
         self.trainer = Trainer(self.model, optimizer_params, self.runner_params['training'])
         self.epoch = 1

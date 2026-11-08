@@ -47,3 +47,20 @@ Tài liệu này ghi lại mọi thay đổi thiết kế giữa PF-UNet và đ�
   - Ngay trong những epoch đầu, makespan giảm xuống 122.0 (+11.9% gap).
   - Sample average loss và makespan giảm đều và ổn định.
   - VRAM ổn định ở mức ~3.8 GB, thời gian mỗi epoch ~10.7s trên GPU.
+
+
+### Tích hợp REINFORCE (Dual Algorithm Support)
+- **Hỗ trợ đa thuật toán trong `SchedulingModel`:**
+  - Thêm cờ `rl_algo`: hỗ trợ `'ppo'` (mặc định) và `'reinforce'`.
+  - Trong chế độ `'reinforce'`: Mạng Critic không được khởi tạo (`self.critic = None`), giúp tiết kiệm tham số và VRAM.
+  - Chữ ký hàm `forward`:
+    - Khi `rl_algo == 'ppo'`: Trả về 4-tuple `([seq_id, machine_id], prob_selected, value, prob_distribution)`.
+    - Khi `rl_algo == 'reinforce'`: Trả về đúng 2-tuple `([seq_id, machine_id], prob_selected)` khớp hoàn hảo với `REINFORCETrainer.py` và `SchedulingEvaluator.py` của nhánh REINFORCE.
+- **Hook tích hợp sạch vào `REINFORCE/`:**
+  - `REINFORCE/configs/fjsp.py`: Khai báo khối `PFUNET_PARAMS` với `'rl_algo': 'reinforce'`. Mặc định `model_params` vẫn là `'resched'`.
+  - `REINFORCE/SchedulingRunner.py`: Nhúng hook chọn `ModelCls = PFUNetModel if model_type == 'pfunet' else Model` và cấu hình `torch.set_default_device(self.device)`.
+- **Kiểm thử nghiệm thu (`tests/test_reinforce.py`):**
+  - Khởi tạo mô hình ở chế độ REINFORCE không có Critic.
+  - Forward pass trả về đúng 2-tuple `(action, prob)`.
+  - Đồ thị tính toán lan truyền ngược sạch sẽ qua toàn bộ tham số U-Net.
+  - Chạy 5 epoch huấn luyện GPU thực tế với `REINFORCETrainer`: Hoạt động trơn tru 100%, loss giảm ổn định và không gặp bất kỳ lỗi xung đột device hay gradient nào.

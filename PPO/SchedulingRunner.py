@@ -41,6 +41,8 @@ class Runner:
 
         self.device = self._configure_device()
         torch.set_default_dtype(torch.float32)
+        if self.device.type == 'cuda':
+            torch.set_default_device(self.device)
 
         mp = dict(model_params)
         model_type = mp.pop('model_type', 'resched')
