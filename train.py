@@ -1,0 +1,132 @@
+"""Turnkey Training Script for PF-UNet / ReSched
+Supports Apple Silicon (M4 / MPS), NVIDIA CUDA, and CPU.
+"""
+
+import os
+import sys
+import copy
+import argparse
+import importlib
+import torch
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train PF-UNet / ReSched on FJSP")
+    parser.add_argument("--algo", type=str, choices=["reinforce", "ppo"], default="reinforce",
+                        help="RL algorithm to run (default: reinforce)")
+    parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
+                        help="Model architecture (default: pfunet)")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Number of training epochs (default: 2000 for full, or 80 for small budget)")
+    parser.add_argument("--batch-size", type=int, default=50,
+                        help="Training batch size (default: 50, matching ReSched paper)")
+    parser.add_argument("--mini-batch-size", type=int, default=50,
+                        help="PPO mini batch size (default: 50)")
+    parser.add_argument("--k-epochs", type=int, default=None,
+                        help="PPO K update epochs (default: 4 from config)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (default: 42)")
+    parser.add_argument("--small-budget", action="store_true",
+                        help="Quick test run (REINFORCE: 80 epochs, PPO: 400 epochs)")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "mps", "cpu"],
+                        help="Execution device: auto (detects cuda -> mps -> cpu), cuda, mps, cpu")
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Custom experiment run name for logging")
+    return parser.parse_args()
+
+
+def detect_device(preferred):
+    if preferred != "auto":
+        return preferred
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def main():
+    args = parse_args()
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    algo_folder = "REINFORCE" if args.algo.lower() == "reinforce" else "PPO"
+    algo_dir = os.path.join(root_dir, algo_folder)
+
+    # Change working directory so relative paths in ReSched configs resolve properly
+    os.chdir(algo_dir)
+    sys.path.insert(0, algo_dir)
+
+    cfg = importlib.import_module("configs.fjsp")
+    from SchedulingRunner import Runner
+
+    logger_params = copy.deepcopy(cfg.logger_params)
+    env_params = copy.deepcopy(cfg.env_params)
+    optimizer_params = copy.deepcopy(cfg.optimizer_params)
+    runner_params = copy.deepcopy(cfg.runner_params)
+
+    # 1. Model Selection
+    if args.model.lower() == "pfunet":
+        model_params = copy.deepcopy(cfg.PFUNET_PARAMS)
+        if args.algo.lower() == "reinforce":
+            model_params["rl_algo"] = "reinforce"
+        else:
+            model_params["rl_algo"] = "ppo"
+    else:
+        model_params = copy.deepcopy(cfg.model_params)
+
+    # 2. Configure Training Mode
+    runner_params["test_only"] = False
+    runner_params["checkpoint"] = None
+    runner_params["model_path"] = None
+    runner_params["seed"] = args.seed
+
+    # 3. Epochs & Batch Size
+    if args.epochs is not None:
+        runner_params["training"]["epochs"] = args.epochs
+    elif args.small_budget:
+        runner_params["training"]["epochs"] = 80 if args.algo.lower() == "reinforce" else 400
+
+    if args.algo.lower() == "reinforce":
+        runner_params["training"]["batch_size"] = args.batch_size
+    else:
+        runner_params["training"]["sample_batch_size"] = args.batch_size
+        runner_params["training"]["mini_batch_size"] = min(args.batch_size, args.mini_batch_size)
+        if args.k_epochs is not None:
+            runner_params["training"]["K_epochs"] = args.k_epochs
+
+    # 4. Device Configuration
+    dev_str = detect_device(args.device)
+    runner_params["use_cuda"] = (dev_str in ("cuda", "mps"))
+
+    # 5. Logger Run Name
+    default_run_name = f"SD1-10x05-{args.model.upper()}-{args.algo.upper()}"
+    logger_params["run_name"] = args.run_name if args.run_name else default_run_name
+    logger_params["save_file"] = True
+    logger_params["folder_path"] = "../result"
+
+    print("=" * 70)
+    print("                     TRAINING CONFIGURATION")
+    print("=" * 70)
+    print(f"Algorithm       : {args.algo.upper()}")
+    print(f"Model           : {args.model.upper()}")
+    print(f"Device          : {dev_str.upper()}")
+    print(f"Total Epochs    : {runner_params['training']['epochs']}")
+    print(f"Batch Size      : {args.batch_size}")
+    if args.algo.lower() == "ppo":
+        print(f"PPO Mini-Batch  : {runner_params['training']['mini_batch_size']}")
+        print(f"PPO K-Epochs    : {runner_params['training']['K_epochs']}")
+    print(f"Random Seed     : {runner_params['seed']}")
+    print(f"Log Folder      : {logger_params['folder_path']}/{logger_params['run_name']}")
+    print("=" * 70)
+
+    runner = Runner(
+        logger_params=logger_params,
+        env_params=env_params,
+        model_params=model_params,
+        optimizer_params=optimizer_params,
+        runner_params=runner_params,
+    )
+    runner.run()
+
+
+if __name__ == "__main__":
+    main()
