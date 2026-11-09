@@ -34,37 +34,52 @@ class Trainer:
             # get dynamic data
             state = env.reset_state()
 
-            reward_list, scaler_list, prob_list = [], [], []
+            state_list, action_list = [], []
+            reward_list, scaler_list = [], []
             done = False
-            while not done:
-                state, scaler = build_model_input(state, env)
-                action, prob = self.model(state)
+            self.model.eval()
+            self.model.set_decode_type('sampling')
+            with torch.no_grad():
+                while not done:
+                    state, scaler = build_model_input(state, env)
+                    state = [s.to(self.device) if isinstance(s, torch.Tensor) else s for s in state]
+                    action, prob = self.model(state)
 
-                state, reward, done = env.step(action)
+                    state_list.append([s.cpu() if isinstance(s, torch.Tensor) else s for s in state])
+                    action_list.append((action[0].cpu(), action[1].cpu()))
 
-                reward_list.append(reward)
-                scaler_list.append(scaler)
-                prob_list.append(prob.unsqueeze(-1))
+                    state, reward, done = env.step(action)
+
+                    reward_list.append(reward)
+                    scaler_list.append(scaler)
 
             returns = self.get_return(reward_list)
             returns = np.array(returns) / np.array(scaler_list)
             returns = torch.tensor(returns, dtype=torch.float, device=self.device)
-            prob_list = torch.cat(prob_list, dim=1)
 
             # shape: (num_steps, batch)
             advantage = returns - returns.mean(dim=1, keepdim=True)
+            advantage_t = advantage.T
 
-            # shape: (batch, num_steps)
-            log_prob = prob_list.log()
-            # shape: (batch, num_steps)
-            loss = - torch.sum(advantage.T * log_prob, dim=1)
-            loss_mean = loss.mean()
-
+            # Recompute step-by-step with gradients (Gradient Checkpointing)
+            self.model.train()
+            self.model.set_decode_type('teacher_forcing')
             self.optimizer.zero_grad()
-            loss_mean.backward()
-            self.optimizer.step()
+            total_steps = len(state_list)
+            batch_loss = 0.0
 
-            loss_am.update(loss_mean.item(), bs)
+            for step in range(total_steps):
+                st = [s.to(self.device) if isinstance(s, torch.Tensor) else s for s in state_list[step]]
+                act = (action_list[step][0].to(self.device), action_list[step][1].to(self.device))
+                _, prob = self.model(st, action=act)
+                log_prob = prob.log()
+                adv_step = advantage_t[:, step]
+                loss_step = - torch.sum(adv_step * log_prob) / bs
+                loss_step.backward()
+                batch_loss += loss_step.item()
+
+            self.optimizer.step()
+            loss_am.update(batch_loss, bs)
 
             # Score
             ###############################################
