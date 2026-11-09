@@ -95,8 +95,10 @@ def main():
     else:
         env_params["generate_param"]["min_processing_time"] = 1
         env_params["generate_param"]["max_processing_time"] = 99
-        env_params["generate_param"]["min_operation"] = 1
-        env_params["generate_param"]["max_operation"] = num_jobs
+        # In SD2 (Wang et al., 2024b / TNNLS), each job has num_machines operations with mixed machine flexibility,
+        # perfectly matching the pre-generated validation and test data (*+mix)
+        env_params["generate_param"].pop("min_operation", None)
+        env_params["generate_param"].pop("max_operation", None)
         val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD2/{num_jobs}x{num_machines}+mix"
 
     if os.path.exists(os.path.join(algo_dir, val_data_path)):
