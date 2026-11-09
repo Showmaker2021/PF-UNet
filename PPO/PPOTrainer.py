@@ -11,16 +11,17 @@ from SchedulingModel import build_model_input
 
 # PPO Trainer
 class Trainer:
-    def __init__(self, model, optimizer_params, training_params):
+    def __init__(self, model, optimizer_params, training_params, device=None):
         self.training_params = training_params
         self.optimizer_params = optimizer_params
         self.model = model
+        self.device = device or next(model.parameters()).device
         self.optimizer = Optimizer(self.model.parameters(), **self.optimizer_params['optimizer'])
         self.scheduler = Scheduler(self.optimizer, **self.optimizer_params['scheduler'])
         self.logger = lambda x: print(x)
 
         self.memory = Memory(gamma=training_params['gamma'], gae_lambda=training_params['lambda'])
-        self.model_old = copy.deepcopy(model)
+        self.model_old = copy.deepcopy(model).to(self.device)
         self.num_epoch = 1
 
     def train(self, env, num_epoch=1):
@@ -49,6 +50,7 @@ class Trainer:
                 done = False
                 while not done:
                     state, scaler = build_model_input(state, env)
+                    state = [s.to(self.device) if isinstance(s, torch.Tensor) else s for s in state]
                     state_list.append([np.array(s.cpu()) for s in state])
                     action, prob, value, _ = self.model_old(state)
 
@@ -99,16 +101,18 @@ class Trainer:
             self.memory.iterate_init(shuffle=True)
             for states, mini_batch in self.memory.iterate_once(self.training_params['mini_batch_size']):
                 for key in mini_batch:
-                    mini_batch[key] = torch.tensor(mini_batch[key])
+                    mini_batch[key] = torch.tensor(mini_batch[key], device=self.device)
 
-                prob_list = []
-                entropy_list = []
-                value_list = []
+                self.optimizer.zero_grad()
                 step = 0
                 total_step = mini_batch['sequences'].shape[1]
+                ep_pg_loss = 0.0
+                ep_vf_loss = 0.0
+                ep_entropy = 0.0
+
                 while step < total_step:
                     state = states[step]
-                    state = [torch.tensor(s) for s in state]
+                    state = [torch.tensor(s, device=self.device) for s in state]
                     seq = mini_batch['sequences'][:, step]
                     machine = mini_batch['machines'][:, step]
                     action = (seq, machine)
@@ -117,33 +121,30 @@ class Trainer:
                     _, prob, value, action_prob = self.model(state, action=action)
                     dist = Categorical(probs=action_prob.flatten(-2, -1))
                     ent = dist.entropy().mean()
-                    entropy_list.append(ent)
-                    prob_list.append(prob)
-                    value_list.append(value)
+
+                    old_prob = mini_batch['probs'][:, step]
+                    old_value = mini_batch['values'][:, step]
+                    advantage = mini_batch['advantages'][:, step]
+                    ret = mini_batch['returns'][:, step]
+
+                    pg_loss_step = self.policy_loss(prob, old_prob, advantage)
+                    vf_loss_step = self.value_loss(value, old_value, ret)
+                    entropy_step = - ent
+
+                    loss_step = (pg_loss_step + self.training_params['vf_coef'] * vf_loss_step + self.training_params['entropy_coef'] * entropy_step) / total_step
+                    loss_step.backward()
+
+                    ep_pg_loss += pg_loss_step.item() / total_step
+                    ep_vf_loss += vf_loss_step.item() / total_step
+                    ep_entropy += entropy_step.item() / total_step
                     step += 1
 
-                # [batch, step]
-                new_probs = torch.stack(prob_list, dim=1)
-                new_values = torch.stack(value_list, dim=1)
-                old_probs = mini_batch['probs']
-                old_values = mini_batch['values']
-                advantages = mini_batch['advantages']
-                returns = mini_batch['returns']
-
-                pg_loss = self.policy_loss(new_probs, old_probs, advantages)
-                vf_loss = self.value_loss(new_values, old_values, returns)
-                entropy = - torch.mean(torch.stack(entropy_list))
-
-                loss = pg_loss + self.training_params['vf_coef'] * vf_loss + self.training_params['entropy_coef'] * entropy
-
-                self.optimizer.zero_grad()
-                loss.backward()
                 self.optimizer.step()
 
-                policy_l.update(pg_loss.item())
-                value_l.update(vf_loss.item())
-                entropy_l.update(entropy.item())
-                total_loss.update(loss.item())
+                policy_l.update(ep_pg_loss)
+                value_l.update(ep_vf_loss)
+                entropy_l.update(ep_entropy)
+                total_loss.update(ep_pg_loss + self.training_params['vf_coef'] * ep_vf_loss + self.training_params['entropy_coef'] * ep_entropy)
 
             self.logger(
                 'Epoch {:3d}: (PPO Train {:3d}/{:3d}) Policy Loss: {:.4f}, Value Loss: {:.4f}, Entropy: {:.4f}'

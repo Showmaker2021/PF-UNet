@@ -68,6 +68,10 @@ class Model(nn.Module):
         self.decode_type = 'sampling'
 
     def forward(self, state, action=None):
+        dev = next(self.parameters()).device
+        state = [s.to(dev) if isinstance(s, torch.Tensor) else s for s in state]
+        if action is not None:
+            action = [a.to(dev) if isinstance(a, torch.Tensor) else a for a in action]
         (min_duration, duration, o_at, m_at, dependency_o, dependency_m, action_mask, rev_pos) = state
 
         # shape: (batch, jo, embedding)
