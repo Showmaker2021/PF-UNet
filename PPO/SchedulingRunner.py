@@ -41,7 +41,7 @@ class Runner:
 
         self.device = self._configure_device()
         torch.set_default_dtype(torch.float32)
-        if self.device.type == 'cuda':
+        if self.device.type in ('cuda', 'mps'):
             torch.set_default_device(self.device)
 
         mp = dict(model_params)
@@ -122,13 +122,16 @@ class Runner:
                         score_test, dataset_path, inference_type))
 
     def _configure_device(self):
-        use_cuda = self.runner_params['use_cuda']
+        use_cuda = self.runner_params.get('use_cuda', True)
         if use_cuda:
-            if not torch.cuda.is_available():
-                raise RuntimeError('CUDA is requested but not available.')
-            cuda_device_num = self.runner_params['cuda_device_num']
-            torch.cuda.set_device(cuda_device_num)
-            return torch.device(f'cuda:{cuda_device_num}')
+            if torch.cuda.is_available():
+                cuda_device_num = self.runner_params.get('cuda_device_num', 0)
+                torch.cuda.set_device(cuda_device_num)
+                return torch.device(f'cuda:{cuda_device_num}')
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                return torch.device('mps')
+            else:
+                return torch.device('cpu')
         return torch.device('cpu')
 
     def _initialize_checkpoint_and_model(self):
@@ -167,6 +170,8 @@ class Runner:
     def _clear_cuda_cache(self):
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
+        elif self.device.type == 'mps' and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
 
     def _load_model_weights(self, path):
         model_path = Path(path)

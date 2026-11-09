@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Training runs & logs
+result/
+
+# Mac OS files
+.DS_Store
+
+# External reference repos
+figures4papers/
+
+# IDE & checkpoint caches
+.idea/
+.vscode/
+*.swp
