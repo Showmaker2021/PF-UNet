@@ -45,13 +45,20 @@ python train.py --algo reinforce --model pfunet --dataset SD1 --size 20x10
 python train.py --algo reinforce --model pfunet --dataset SD2 --size 10x5
 ```
 
-### Cách 2: Huấn luyện tự động toàn bộ 4 kích thước (Cắm qua đêm)
-Để tự động train lần lượt cả 4 size ($10\times 5 \to 20\times 5 \to 15\times 10 \to 20\times 10$) để có trọn bộ Bảng 1:
+### Cách 2: Huấn luyện tự động toàn bộ kích thước (Cắm qua đêm)
+File `run_all.py` cho phép tự động train tuần tự từng mô hình một:
+
 ```bash
-# Tự động train tuần tự cả 4 size của SD1 (~7-8 tiếng bằng REINFORCE)
+# 1. Tự động train tuần tự cả 4 size của SD1 (~7-8 tiếng bằng REINFORCE)
 python run_all.py --algo reinforce --model pfunet --dataset SD1
 
-# Hoặc test nhanh toàn bộ luồng (80 epochs mỗi size, ~25 phút)
+# 2. Tự động train tuần tự cả 4 size của SD2
+python run_all.py --algo reinforce --model pfunet --dataset SD2
+
+# 3. CẮM FULL CẢ SD1 VÀ SD2 (Toàn bộ 8 models cho trọn vẹn Bảng 1)
+python run_all.py --algo reinforce --model pfunet --dataset all
+
+# Hoặc test nhanh toàn bộ luồng trước khi chạy thật (80 epochs mỗi size)
 python run_all.py --algo reinforce --model pfunet --dataset SD1 --small-budget
 ```
 

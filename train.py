@@ -86,10 +86,17 @@ def main():
     is_sd1 = (args.dataset.upper() == "SD1")
     env_params["generate_param"]["SD1"] = is_sd1
 
-    # Match validation dataset if available
+    # Match exact generator specifications from paper:
+    # SD1: duration in [1, 20], ops in [0.8n, 1.2n]
+    # SD2: duration in [1, 99], ops in [1, n]
     if is_sd1:
+        env_params["generate_param"]["max_processing_time"] = 20
         val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD1/{num_jobs}x{num_machines}"
     else:
+        env_params["generate_param"]["min_processing_time"] = 1
+        env_params["generate_param"]["max_processing_time"] = 99
+        env_params["generate_param"]["min_operation"] = 1
+        env_params["generate_param"]["max_operation"] = num_jobs
         val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD2/{num_jobs}x{num_machines}+mix"
 
     if os.path.exists(os.path.join(algo_dir, val_data_path)):

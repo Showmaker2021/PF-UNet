@@ -1,10 +1,11 @@
 """Sequential Batch Training Script for PF-UNet / ReSched
-Runs all sizes sequentially to populate Table 1.
+Runs all sizes for SD1 and/or SD2 sequentially to populate Table 1.
 """
 
 import subprocess
 import sys
 import argparse
+import time
 
 SIZES = ["10x5", "20x5", "15x10", "20x10"]
 
@@ -15,8 +16,8 @@ def parse_args():
                         help="RL algorithm (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
                         help="Model architecture (default: pfunet)")
-    parser.add_argument("--dataset", type=str, choices=["SD1", "SD2"], default="SD1",
-                        help="Dataset distribution (default: SD1)")
+    parser.add_argument("--dataset", type=str, choices=["SD1", "SD2", "all"], default="SD1",
+                        help="Dataset to train: SD1 (4 sizes), SD2 (4 sizes), or all (8 sizes total) (default: SD1)")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override number of epochs (default: 2000)")
     parser.add_argument("--small-budget", action="store_true",
@@ -28,37 +29,53 @@ def parse_args():
 
 def main():
     args = parse_args()
-    print("=" * 70)
+    datasets_to_run = ["SD1", "SD2"] if args.dataset.lower() == "all" else [args.dataset.upper()]
+    total_runs = len(datasets_to_run) * len(SIZES)
+
+    print("=" * 75)
     print("        BATCH SEQUENTIAL TRAINING SUITE FOR TABLE 1")
-    print(f"Algorithm: {args.algo.upper()} | Model: {args.model.upper()} | Dataset: {args.dataset}")
-    print(f"Sizes to train: {', '.join(SIZES)}")
-    print("=" * 70)
+    print(f"Algorithm       : {args.algo.upper()}")
+    print(f"Model           : {args.model.upper()}")
+    print(f"Datasets        : {', '.join(datasets_to_run)}")
+    print(f"Sizes per ds    : {', '.join(SIZES)}")
+    print(f"Total Runs      : {total_runs} models to train")
+    print("=" * 75)
 
-    for idx, size in enumerate(SIZES, 1):
-        print(f"\n[{idx}/{len(SIZES)}] Starting training for size {size}...")
-        cmd = [
-            sys.executable, "train.py",
-            "--algo", args.algo,
-            "--model", args.model,
-            "--dataset", args.dataset,
-            "--size", size,
-            "--device", args.device,
-        ]
-        if args.epochs is not None:
-            cmd.extend(["--epochs", str(args.epochs)])
-        if args.small_budget:
-            cmd.append("--small-budget")
+    run_count = 0
+    start_time_all = time.time()
 
-        ret = subprocess.run(cmd)
-        if ret.returncode != 0:
-            print(f"Error occurred while training size {size}! Exiting.")
-            sys.exit(ret.returncode)
-        print(f"Successfully finished size {size}!\n")
+    for ds in datasets_to_run:
+        for size in SIZES:
+            run_count += 1
+            print(f"\n[{run_count}/{total_runs}] Starting training: Dataset={ds}, Size={size}...")
+            start_t = time.time()
 
-    print("=" * 70)
-    print("ALL 4 SIZES COMPLETED SUCCESSFULLY!")
+            cmd = [
+                sys.executable, "train.py",
+                "--algo", args.algo,
+                "--model", args.model,
+                "--dataset", ds,
+                "--size", size,
+                "--device", args.device,
+            ]
+            if args.epochs is not None:
+                cmd.extend(["--epochs", str(args.epochs)])
+            if args.small_budget:
+                cmd.append("--small-budget")
+
+            ret = subprocess.run(cmd)
+            if ret.returncode != 0:
+                print(f"[ERROR] Failed during Dataset={ds}, Size={size}! Return code: {ret.returncode}")
+                sys.exit(ret.returncode)
+
+            elapsed = time.time() - start_t
+            print(f"[DONE] Completed {ds} {size} in {elapsed / 60:.1f} minutes!\n")
+
+    total_elapsed = time.time() - start_time_all
+    print("=" * 75)
+    print(f"ALL {total_runs} MODELS COMPLETED SUCCESSFULLY in {total_elapsed / 3600:.2f} hours!")
     print("All checkpoints and evaluation logs are saved in result/FJSP/")
-    print("=" * 70)
+    print("=" * 75)
 
 
 if __name__ == "__main__":
