@@ -21,9 +21,12 @@ from SchedulingModel import Model
 import sys
 import os
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+reinforce_dir = os.path.dirname(os.path.abspath(__file__))
 ppo_dir = os.path.join(root_dir, 'PPO')
+if reinforce_dir not in sys.path:
+    sys.path.insert(0, reinforce_dir)
 if ppo_dir not in sys.path:
-    sys.path.insert(0, ppo_dir)
+    sys.path.append(ppo_dir)
 from pfunet.model import SchedulingModel as PFUNetModel
 # from SchedulingModel_old import Model
 from REINFORCETrainer import Trainer

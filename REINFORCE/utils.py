@@ -87,6 +87,8 @@ def copy_all_src(dst_root):
 
         if hasattr(value, '__file__') and value.__file__:
             src_abspath = os.path.abspath(value.__file__)
+            if not os.path.isfile(src_abspath):
+                continue
 
             if src_abspath == os.path.abspath(sys.argv[0]) and main_file_copied:
                 continue

@@ -1,5 +1,5 @@
 """Turnkey Benchmark Evaluation Script for PF-UNet / ReSched
-Evaluates trained checkpoints across standard FJSP benchmarks.
+Evaluates trained checkpoints across standard FJSP benchmarks and synthetic datasets.
 """
 
 import os
@@ -10,6 +10,32 @@ import importlib
 import torch
 
 
+BENCHMARK_DATASETS = [
+    '../data/FJSP/TNNLS/BenchData/Brandimarte',
+    '../data/FJSP/TNNLS/BenchData/Hurink_rdata',
+    '../data/FJSP/TNNLS/BenchData/Hurink_edata',
+    '../data/FJSP/TNNLS/BenchData/Hurink_vdata',
+]
+
+SD1_DATASETS = [
+    '../data/FJSP/TNNLS/SD1/10x5',
+    '../data/FJSP/TNNLS/SD1/15x10',
+    '../data/FJSP/TNNLS/SD1/20x5',
+    '../data/FJSP/TNNLS/SD1/20x10',
+    '../data/FJSP/TNNLS/SD1/30x10',
+    '../data/FJSP/TNNLS/SD1/40x10',
+]
+
+SD2_DATASETS = [
+    '../data/FJSP/TNNLS/SD2/10x5+mix',
+    '../data/FJSP/TNNLS/SD2/15x10+mix',
+    '../data/FJSP/TNNLS/SD2/20x5+mix',
+    '../data/FJSP/TNNLS/SD2/20x10+mix',
+    '../data/FJSP/TNNLS/SD2/30x10+mix',
+    '../data/FJSP/TNNLS/SD2/40x10+mix',
+]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate PF-UNet / ReSched Checkpoint")
     parser.add_argument("--model-path", type=str, required=True,
@@ -17,7 +43,15 @@ def parse_args():
     parser.add_argument("--algo", type=str, choices=["reinforce", "ppo"], default="reinforce",
                         help="RL algorithm framework (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
-                        help="Model architecture (default: pfunet)")
+                        help="Model architecture: pfunet or resched (default: pfunet)")
+    parser.add_argument("--suite", type=str, default="all",
+                        choices=["all", "benchmark", "sd1", "sd2", "custom"],
+                        help="Dataset suite to evaluate: all (16 datasets), benchmark (4 public benchmarks), sd1 (6 datasets), sd2 (6 datasets), custom")
+    parser.add_argument("--size", type=str, default=None,
+                        choices=["10x5", "15x10", "20x5", "20x10", "30x10", "40x10"],
+                        help="Optional specific problem size to filter in sd1 or sd2 suite")
+    parser.add_argument("--dataset-path", type=str, nargs="+", default=None,
+                        help="Explicit path(s) to dataset folder(s) (overrides --suite)")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "mps", "cpu"],
                         help="Execution device: auto (detects cuda -> mps -> cpu), cuda, mps, cpu")
     parser.add_argument("--batch-size", type=int, default=200,
@@ -38,6 +72,26 @@ def detect_device(preferred):
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def resolve_datasets(args):
+    if args.dataset_path is not None:
+        return args.dataset_path
+
+    if args.suite == "benchmark":
+        return BENCHMARK_DATASETS
+    elif args.suite == "sd1":
+        if args.size:
+            return [f"../data/FJSP/TNNLS/SD1/{args.size}"]
+        return SD1_DATASETS
+    elif args.suite == "sd2":
+        if args.size:
+            return [f"../data/FJSP/TNNLS/SD2/{args.size}+mix"]
+        return SD2_DATASETS
+    elif args.suite == "all":
+        return BENCHMARK_DATASETS + SD1_DATASETS + SD2_DATASETS
+    else:
+        raise ValueError(f"Unknown suite '{args.suite}'. Pass --dataset-path for custom paths.")
 
 
 def main():
@@ -75,7 +129,9 @@ def main():
     runner_params["checkpoint"] = None
     runner_params["model_path"] = model_path_abs
 
-    # 3. Test params
+    # 3. Configure Test Datasets explicitly
+    target_datasets = resolve_datasets(args)
+    runner_params["test"]["dataset_path"] = target_datasets
     runner_params["test"]["inference_type"] = [args.inference_type]
     runner_params["test"]["batch_size"] = args.batch_size
     runner_params["test"]["sample_times"] = args.sample_times
@@ -93,6 +149,11 @@ def main():
     print(f"Device          : {dev_str.upper()}")
     print(f"Inference Type  : {args.inference_type}")
     print(f"Batch Size      : {args.batch_size}")
+    print(f"Suite           : {args.suite}")
+    print(f"Num Datasets    : {len(target_datasets)}")
+    print("Target Datasets :")
+    for d in target_datasets:
+        print(f"  - {d}")
     print("=" * 70)
 
     runner = Runner(

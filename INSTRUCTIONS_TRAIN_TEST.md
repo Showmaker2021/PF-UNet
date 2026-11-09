@@ -87,19 +87,34 @@ Sau khi huấn luyện xong, mô hình tốt nhất sẽ được lưu tại:
 Dùng file `test.py` để đánh giá trên toàn bộ 6 bộ benchmark tiêu chuẩn:
 - **Brandimarte** (10 bài toán kinh điển)
 - **Hurink_r, Hurink_e, Hurink_v** (bộ dữ liệu phức tạp)
-- **SD1 10x5** (In-distribution Songwen)
-- **SD2 10x5+mix** (Out-of-distribution TNNLS)
+### Các tập dữ liệu kiểm thử hỗ trợ (`--suite`):
+- `--suite benchmark` (Mặc định cho benchmark công khai): Gồm 4 bộ dữ liệu kinh điển:
+  - **Brandimarte** (Mk01 - Mk10)
+  - **Hurink_rdata** (66 instances)
+  - **Hurink_edata** (66 instances)
+  - **Hurink_vdata** (66 instances)
+- `--suite sd1`: Toàn bộ 6 bài SD1 (10x5, 15x10, 20x5, 20x10, 30x10, 40x10).
+- `--suite sd2`: Toàn bộ 6 bài SD2 (10x5+mix, 15x10+mix, 20x5+mix, 20x10+mix, 30x10+mix, 40x10+mix).
+- `--suite all`: Kiểm thử toàn diện toàn bộ 16 tập dữ liệu có trong Bảng 1 paper ReSched.
+- `--size <10x5|15x10|20x5|20x10|30x10|40x10>`: Lọc chính xác 1 kích thước cần test trong SD1 hoặc SD2.
+- `--dataset-path <đường_dẫn>`: Trỏ trực tiếp đến 1 hoặc nhiều thư mục dữ liệu bất kỳ.
 
 ### Lệnh chạy đánh giá:
 ```bash
-# Đánh giá checkpoint PF-UNet (REINFORCE)
-python test.py --algo reinforce --model pfunet --model-path result/FJSP/<Tên_thư_mục_run>/best_model.pth
+# 1. Đánh giá trên bộ 4 Benchmark chuẩn (Brandimarte + Hurink r, e, v)
+python test.py --algo reinforce --model pfunet --model-path result/FJSP/<Tên_thư_mục_run>/best_model.pth --suite benchmark
 
-# Đánh giá checkpoint PF-UNet (PPO)
-python test.py --algo ppo --model pfunet --model-path result/FJSP/<Tên_thư_mục_run>/best_model.pth
+# 2. Đánh giá in-distribution trên bài huấn luyện (Ví dụ SD1 10x5)
+python test.py --algo reinforce --model pfunet --model-path <path_to_model.pth> --suite sd1 --size 10x5
 
-# Đánh giá với chế độ Sampling (100 lần lấy nghiệm tốt nhất)
-python test.py --algo reinforce --model pfunet --model-path <path_to_model.pth> --inference-type sampling --sample-times 100
+# 3. Đánh giá OOD trên SD1 kích thước lớn (30x10, 40x10)
+python test.py --algo reinforce --model pfunet --model-path <path_to_model.pth> --suite sd1
+
+# 4. Đánh giá toàn bộ 16 datasets (Bảng 1 Table 1)
+python test.py --algo reinforce --model pfunet --model-path <path_to_model.pth> --suite all
+
+# 5. Đánh giá với chế độ Sampling (100 lần lấy nghiệm tốt nhất)
+python test.py --algo reinforce --model pfunet --model-path <path_to_model.pth> --suite benchmark --inference-type sampling --sample-times 100
 ```
 
 Kết quả Makespan và Optimality Gap (%) sẽ được in trực tiếp ra màn hình và ghi vào file `log.txt`.
