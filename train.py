@@ -15,6 +15,8 @@ def parse_args():
     parser.add_argument("--size", type=str, default="10x5",
                         choices=["10x5", "15x10", "20x5", "20x10"],
                         help="FJSP problem size to train on: 10x5, 15x10, 20x5, 20x10 (default: 10x5)")
+    parser.add_argument("--dataset", type=str, default="SD1", choices=["SD1", "SD2"],
+                        help="Training dataset distribution: SD1 (standard) or SD2 (mixed) (default: SD1)")
     parser.add_argument("--algo", type=str, choices=["reinforce", "ppo"], default="reinforce",
                         help="RL algorithm to run (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
@@ -76,14 +78,20 @@ def main():
     else:
         model_params = copy.deepcopy(cfg.model_params)
 
-    # 2. Problem Size Configuration (Jobs x Machines)
+    # 2. Problem Size & Dataset Configuration (Jobs x Machines)
     jobs_str, mach_str = args.size.split("x")
     num_jobs, num_machines = int(jobs_str), int(mach_str)
     env_params["generate_param"]["num_jobs"] = num_jobs
     env_params["generate_param"]["num_machines"] = num_machines
+    is_sd1 = (args.dataset.upper() == "SD1")
+    env_params["generate_param"]["SD1"] = is_sd1
 
     # Match validation dataset if available
-    val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD1/{num_jobs}x{num_machines}"
+    if is_sd1:
+        val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD1/{num_jobs}x{num_machines}"
+    else:
+        val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD2/{num_jobs}x{num_machines}+mix"
+
     if os.path.exists(os.path.join(algo_dir, val_data_path)):
         runner_params["validation"]["dataset_path"] = val_data_path
 
@@ -112,7 +120,7 @@ def main():
     runner_params["use_cuda"] = (dev_str in ("cuda", "mps"))
 
     # 6. Logger Run Name
-    default_run_name = f"SD1-{num_jobs}x{num_machines:02d}-{args.model.upper()}-{args.algo.upper()}"
+    default_run_name = f"{args.dataset.upper()}-{num_jobs}x{num_machines:02d}-{args.model.upper()}-{args.algo.upper()}"
     logger_params["run_name"] = args.run_name if args.run_name else default_run_name
     logger_params["save_file"] = True
     logger_params["folder_path"] = "../result"
@@ -122,6 +130,7 @@ def main():
     print("=" * 70)
     print(f"Algorithm       : {args.algo.upper()}")
     print(f"Model           : {args.model.upper()}")
+    print(f"Dataset         : {args.dataset.upper()}")
     print(f"Problem Size    : {num_jobs} Jobs x {num_machines} Machines")
     print(f"Device          : {dev_str.upper()}")
     print(f"Total Epochs    : {runner_params['training']['epochs']}")
