@@ -9,10 +9,11 @@ from SchedulingModel import build_model_input
 
 # REINFORCE Trainer
 class Trainer:
-    def __init__(self, model, optimizer_params, training_params):
+    def __init__(self, model, optimizer_params, training_params, device=None):
         self.training_params = training_params
         self.optimizer_params = optimizer_params
         self.model = model
+        self.device = device or next(model.parameters()).device
         self.optimizer = Optimizer(self.model.parameters(), **self.optimizer_params['optimizer'])
         self.scheduler = Scheduler(self.optimizer, **self.optimizer_params['scheduler'])
         self.logger = lambda x: print(x)
@@ -47,7 +48,7 @@ class Trainer:
 
             returns = self.get_return(reward_list)
             returns = np.array(returns) / np.array(scaler_list)
-            returns = torch.tensor(returns, dtype=torch.float)
+            returns = torch.tensor(returns, dtype=torch.float, device=self.device)
             prob_list = torch.cat(prob_list, dim=1)
 
             # shape: (num_steps, batch)

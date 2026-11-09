@@ -58,11 +58,9 @@ class Runner:
         mp = dict(model_params)
         model_type = mp.pop('model_type', 'resched')
         ModelCls = PFUNetModel if model_type == 'pfunet' else Model
-        self.model = ModelCls(**mp)
-        if model_type == 'pfunet':
-            self.model = self.model.to(self.device)
+        self.model = ModelCls(**mp).to(self.device)
         self.test_only_flag = self.runner_params.get('test_only', False)
-        self.trainer = Trainer(self.model, optimizer_params, self.runner_params['training'])
+        self.trainer = Trainer(self.model, optimizer_params, self.runner_params['training'], device=self.device)
         self.epoch = 1
 
         self.logger = getLogger(name='runner')
