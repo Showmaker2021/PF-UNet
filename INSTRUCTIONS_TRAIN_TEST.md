@@ -27,37 +27,32 @@ pip install torch torchvision numpy scipy pandas
 
 ## 2. Huấn luyện (Training)
 
-Chạy trực tiếp file `train.py` tại thư mục gốc của dự án (`ReSched/`).
+Chạy trực tiếp file `train.py` hoặc `run_all.py` tại thư mục gốc của dự án (`ReSched/`).
 
-### A. Huấn luyện với REINFORCE (Khuyến nghị chạy trước)
-* **Thời gian trên M4 Pro:** ~1.5 đến 2 tiếng (2,000 epochs).
-* **VRAM / RAM:** ~2.5 GB (rất nhẹ và ổn định).
+### Cách 1: Huấn luyện từng kích thước bài toán
+Hệ thống tự động khớp cấu hình theo bài báo (size nhỏ $10\times 5, 20\times 5$ dùng `batch_size=50`, size lớn $15\times 10, 20\times 10$ tự động giảm `batch_size=24` như trong phụ lục B.2 của ReSched):
 
 ```bash
-# 1. Chạy mặc định trên kích thước 10x5 (Cấu hình chuẩn của bài báo)
-python train.py --algo reinforce --model pfunet --size 10x5 --epochs 2000 --batch-size 50
+# Huấn luyện mô hình chuẩn 10x5 (Khuyến nghị chạy trước, ~1.5 đến 2 tiếng trên M4 Pro)
+python train.py --algo reinforce --model pfunet --dataset SD1 --size 10x5
 
-# 2. Hoặc train trên kích thước lớn hơn: 20x10 hoặc 15x10
-python train.py --algo reinforce --model pfunet --size 20x10 --epochs 2000 --batch-size 50
-python train.py --algo reinforce --model pfunet --size 15x10 --epochs 2000 --batch-size 50
+# Huấn luyện các kích thước khác của SD1
+python train.py --algo reinforce --model pfunet --dataset SD1 --size 20x5
+python train.py --algo reinforce --model pfunet --dataset SD1 --size 15x10
+python train.py --algo reinforce --model pfunet --dataset SD1 --size 20x10
 
-# Hoặc chạy thử nghiệm nhanh (Small budget: 80 epochs, mất ~5-8 phút)
-python train.py --algo reinforce --model pfunet --small-budget
+# Huấn luyện trên hệ dữ liệu SD2
+python train.py --algo reinforce --model pfunet --dataset SD2 --size 10x5
 ```
 
-### B. Huấn luyện với PPO
-* **Thời gian trên M4 Pro:** ~7 đến 8 tiếng (2,000 epochs, $K=4$ updates - thích hợp cắm qua đêm).
-* **VRAM / RAM:** ~4.5 GB.
-
+### Cách 2: Huấn luyện tự động toàn bộ 4 kích thước (Cắm qua đêm)
+Để tự động train lần lượt cả 4 size ($10\times 5 \to 20\times 5 \to 15\times 10 \to 20\times 10$) để có trọn bộ Bảng 1:
 ```bash
-# 1. Chạy mặc định trên kích thước 10x5
-python train.py --algo ppo --model pfunet --size 10x5 --epochs 2000 --batch-size 50
+# Tự động train tuần tự cả 4 size của SD1 (~7-8 tiếng bằng REINFORCE)
+python run_all.py --algo reinforce --model pfunet --dataset SD1
 
-# 2. Hoặc train trên kích thước lớn hơn: 20x10 hoặc 15x10
-python train.py --algo ppo --model pfunet --size 20x10 --epochs 2000 --batch-size 50
-
-# Hoặc chạy thử nghiệm nhanh (Small budget: 400 epochs, mất ~1.5 tiếng)
-python train.py --algo ppo --model pfunet --small-budget
+# Hoặc test nhanh toàn bộ luồng (80 epochs mỗi size, ~25 phút)
+python run_all.py --algo reinforce --model pfunet --dataset SD1 --small-budget
 ```
 
 ### Các tùy chọn dòng lệnh của `train.py`:

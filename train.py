@@ -23,8 +23,8 @@ def parse_args():
                         help="Model architecture (default: pfunet)")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Number of training epochs (default: 2000 for full, or 80 for small budget)")
-    parser.add_argument("--batch-size", type=int, default=50,
-                        help="Training batch size (default: 50, matching ReSched paper)")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="Training batch size (default: auto -> 50 for small, 24 for larger sizes as in paper)")
     parser.add_argument("--mini-batch-size", type=int, default=50,
                         help="PPO mini batch size (default: 50)")
     parser.add_argument("--k-epochs", type=int, default=None,
@@ -101,17 +101,25 @@ def main():
     runner_params["model_path"] = None
     runner_params["seed"] = args.seed
 
-    # 4. Epochs & Batch Size
+    # 4. Epochs, Batch Size & Episodes (Auto-matched to ReSched Appendix B.2)
+    # "Due to resource constraints, for larger sized problem, 
+    # the number of training instances per epoch is reduced to 500 and the batch size to 24."
+    is_large_size = (num_jobs >= 15 or num_machines >= 10)
+    effective_batch_size = args.batch_size if args.batch_size is not None else (24 if is_large_size else 50)
+    effective_episodes = 500 if is_large_size else 1000
+
     if args.epochs is not None:
         runner_params["training"]["epochs"] = args.epochs
     elif args.small_budget:
         runner_params["training"]["epochs"] = 80 if args.algo.lower() == "reinforce" else 400
 
     if args.algo.lower() == "reinforce":
-        runner_params["training"]["batch_size"] = args.batch_size
+        runner_params["training"]["batch_size"] = effective_batch_size
+        runner_params["training"]["episode"] = effective_episodes
     else:
-        runner_params["training"]["sample_batch_size"] = args.batch_size
-        runner_params["training"]["mini_batch_size"] = min(args.batch_size, args.mini_batch_size)
+        runner_params["training"]["sample_batch_size"] = effective_batch_size
+        mini_bs = args.mini_batch_size if args.mini_batch_size is not None else effective_batch_size
+        runner_params["training"]["mini_batch_size"] = min(effective_batch_size, mini_bs)
         if args.k_epochs is not None:
             runner_params["training"]["K_epochs"] = args.k_epochs
 
@@ -119,7 +127,18 @@ def main():
     dev_str = detect_device(args.device)
     runner_params["use_cuda"] = (dev_str in ("cuda", "mps"))
 
-    # 6. Logger Run Name
+    # 6. Test Suite to run immediately after training
+    # Match the datasets evaluated in Table 1
+    test_paths = [
+        f"../data/FJSP/TNNLS/SD1/{num_jobs}x{num_machines}",
+        "../data/FJSP/TNNLS/BenchData/Brandimarte",
+        "../data/FJSP/TNNLS/BenchData/Hurink_rdata",
+        "../data/FJSP/TNNLS/BenchData/Hurink_edata",
+        "../data/FJSP/TNNLS/BenchData/Hurink_vdata",
+    ]
+    runner_params["test"]["dataset_path"] = [p for p in test_paths if os.path.exists(os.path.join(algo_dir, p))]
+
+    # 7. Logger Run Name
     default_run_name = f"{args.dataset.upper()}-{num_jobs}x{num_machines:02d}-{args.model.upper()}-{args.algo.upper()}"
     logger_params["run_name"] = args.run_name if args.run_name else default_run_name
     logger_params["save_file"] = True
@@ -134,8 +153,10 @@ def main():
     print(f"Problem Size    : {num_jobs} Jobs x {num_machines} Machines")
     print(f"Device          : {dev_str.upper()}")
     print(f"Total Epochs    : {runner_params['training']['epochs']}")
-    print(f"Batch Size      : {args.batch_size}")
-    if args.algo.lower() == "ppo":
+    print(f"Batch Size      : {effective_batch_size}")
+    if args.algo.lower() == "reinforce":
+        print(f"Episodes/Epoch  : {effective_episodes}")
+    else:
         print(f"PPO Mini-Batch  : {runner_params['training']['mini_batch_size']}")
         print(f"PPO K-Epochs    : {runner_params['training']['K_epochs']}")
     print(f"Random Seed     : {runner_params['seed']}")
