@@ -12,6 +12,9 @@ import torch
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train PF-UNet / ReSched on FJSP")
+    parser.add_argument("--size", type=str, default="10x5",
+                        choices=["10x5", "15x10", "20x5", "20x10"],
+                        help="FJSP problem size to train on: 10x5, 15x10, 20x5, 20x10 (default: 10x5)")
     parser.add_argument("--algo", type=str, choices=["reinforce", "ppo"], default="reinforce",
                         help="RL algorithm to run (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
@@ -73,13 +76,24 @@ def main():
     else:
         model_params = copy.deepcopy(cfg.model_params)
 
-    # 2. Configure Training Mode
+    # 2. Problem Size Configuration (Jobs x Machines)
+    jobs_str, mach_str = args.size.split("x")
+    num_jobs, num_machines = int(jobs_str), int(mach_str)
+    env_params["generate_param"]["num_jobs"] = num_jobs
+    env_params["generate_param"]["num_machines"] = num_machines
+
+    # Match validation dataset if available
+    val_data_path = f"../data/FJSP/TNNLS/data_train_vali/SD1/{num_jobs}x{num_machines}"
+    if os.path.exists(os.path.join(algo_dir, val_data_path)):
+        runner_params["validation"]["dataset_path"] = val_data_path
+
+    # 3. Configure Training Mode
     runner_params["test_only"] = False
     runner_params["checkpoint"] = None
     runner_params["model_path"] = None
     runner_params["seed"] = args.seed
 
-    # 3. Epochs & Batch Size
+    # 4. Epochs & Batch Size
     if args.epochs is not None:
         runner_params["training"]["epochs"] = args.epochs
     elif args.small_budget:
@@ -93,12 +107,12 @@ def main():
         if args.k_epochs is not None:
             runner_params["training"]["K_epochs"] = args.k_epochs
 
-    # 4. Device Configuration
+    # 5. Device Configuration
     dev_str = detect_device(args.device)
     runner_params["use_cuda"] = (dev_str in ("cuda", "mps"))
 
-    # 5. Logger Run Name
-    default_run_name = f"SD1-10x05-{args.model.upper()}-{args.algo.upper()}"
+    # 6. Logger Run Name
+    default_run_name = f"SD1-{num_jobs}x{num_machines:02d}-{args.model.upper()}-{args.algo.upper()}"
     logger_params["run_name"] = args.run_name if args.run_name else default_run_name
     logger_params["save_file"] = True
     logger_params["folder_path"] = "../result"
@@ -108,6 +122,7 @@ def main():
     print("=" * 70)
     print(f"Algorithm       : {args.algo.upper()}")
     print(f"Model           : {args.model.upper()}")
+    print(f"Problem Size    : {num_jobs} Jobs x {num_machines} Machines")
     print(f"Device          : {dev_str.upper()}")
     print(f"Total Epochs    : {runner_params['training']['epochs']}")
     print(f"Batch Size      : {args.batch_size}")

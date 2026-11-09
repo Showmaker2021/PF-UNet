@@ -34,8 +34,12 @@ Chạy trực tiếp file `train.py` tại thư mục gốc của dự án (`ReS
 * **VRAM / RAM:** ~2.5 GB (rất nhẹ và ổn định).
 
 ```bash
-# 1. Chạy Full 2000 Epochs (Cấu hình chuẩn của ReSched)
-python train.py --algo reinforce --model pfunet --epochs 2000 --batch-size 50
+# 1. Chạy mặc định trên kích thước 10x5 (Cấu hình chuẩn của bài báo)
+python train.py --algo reinforce --model pfunet --size 10x5 --epochs 2000 --batch-size 50
+
+# 2. Hoặc train trên kích thước lớn hơn: 20x10 hoặc 15x10
+python train.py --algo reinforce --model pfunet --size 20x10 --epochs 2000 --batch-size 50
+python train.py --algo reinforce --model pfunet --size 15x10 --epochs 2000 --batch-size 50
 
 # Hoặc chạy thử nghiệm nhanh (Small budget: 80 epochs, mất ~5-8 phút)
 python train.py --algo reinforce --model pfunet --small-budget
@@ -46,8 +50,11 @@ python train.py --algo reinforce --model pfunet --small-budget
 * **VRAM / RAM:** ~4.5 GB.
 
 ```bash
-# 1. Chạy Full 2000 Epochs (Cấu hình chuẩn của ReSched)
-python train.py --algo ppo --model pfunet --epochs 2000 --batch-size 50
+# 1. Chạy mặc định trên kích thước 10x5
+python train.py --algo ppo --model pfunet --size 10x5 --epochs 2000 --batch-size 50
+
+# 2. Hoặc train trên kích thước lớn hơn: 20x10 hoặc 15x10
+python train.py --algo ppo --model pfunet --size 20x10 --epochs 2000 --batch-size 50
 
 # Hoặc chạy thử nghiệm nhanh (Small budget: 400 epochs, mất ~1.5 tiếng)
 python train.py --algo ppo --model pfunet --small-budget
@@ -56,6 +63,7 @@ python train.py --algo ppo --model pfunet --small-budget
 ### Các tùy chọn dòng lệnh của `train.py`:
 | Cờ (Flag) | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |
+| `--size` | `10x5` | Kích thước bài toán huấn luyện: `10x5`, `15x10`, `20x5`, `20x10` |
 | `--algo` | `reinforce` | Thuật toán học tăng cường: `reinforce` hoặc `ppo` |
 | `--model` | `pfunet` | Kiến trúc mô hình: `pfunet` (mô hình của ta) hoặc `resched` (baseline) |
 | `--epochs` | `2000` | Số epoch huấn luyện |
