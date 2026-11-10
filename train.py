@@ -21,6 +21,8 @@ def parse_args():
                         help="RL algorithm to run (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
                         help="Model architecture (default: pfunet)")
+    parser.add_argument("--model-size", type=str, choices=["small", "base", "tiny"], default="small",
+                        help="PF-UNet model variant: small (~930K params, matched 1:1 with ReSched), base (~3.6M params), or tiny (~230K params) (default: small)")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Number of training epochs (default: 2000 for full, or 80 for small budget)")
     parser.add_argument("--batch-size", type=int, default=None,
@@ -70,7 +72,13 @@ def main():
 
     # 1. Model Selection
     if args.model.lower() == "pfunet":
-        model_params = copy.deepcopy(cfg.PFUNET_PARAMS)
+        if args.model_size == "base":
+            model_params = copy.deepcopy(cfg.PFUNET_BASE_PARAMS)
+        elif args.model_size == "tiny":
+            model_params = copy.deepcopy(cfg.PFUNET_TINY_PARAMS)
+        else:
+            model_params = copy.deepcopy(cfg.PFUNET_SMALL_PARAMS)
+
         if args.algo.lower() == "reinforce":
             model_params["rl_algo"] = "reinforce"
         else:
@@ -166,7 +174,8 @@ def main():
     runner_params["test"]["dataset_path"] = [p for p in test_paths if os.path.exists(os.path.join(algo_dir, p))]
 
     # 7. Logger Run Name
-    default_run_name = f"{args.dataset.upper()}-{num_jobs}x{num_machines:02d}-{args.model.upper()}-{args.algo.upper()}"
+    size_tag = f"-{args.model_size.upper()}" if args.model.lower() == "pfunet" else ""
+    default_run_name = f"{args.dataset.upper()}-{num_jobs}x{num_machines:02d}-{args.model.upper()}{size_tag}-{args.algo.upper()}"
     logger_params["run_name"] = args.run_name if args.run_name else default_run_name
     logger_params["save_file"] = True
     logger_params["folder_path"] = "../result"
@@ -175,7 +184,8 @@ def main():
     print("                     TRAINING CONFIGURATION")
     print("=" * 70)
     print(f"Algorithm       : {args.algo.upper()}")
-    print(f"Model           : {args.model.upper()}")
+    model_desc = f"{args.model.upper()} ({args.model_size.upper()})" if args.model.lower() == "pfunet" else args.model.upper()
+    print(f"Model           : {model_desc}")
     print(f"Dataset         : {args.dataset.upper()}")
     print(f"Problem Size    : {num_jobs} Jobs x {num_machines} Machines")
     print(f"Device          : {dev_str.upper()}")

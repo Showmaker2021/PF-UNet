@@ -44,6 +44,8 @@ def parse_args():
                         help="RL algorithm framework (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
                         help="Model architecture: pfunet or resched (default: pfunet)")
+    parser.add_argument("--model-size", type=str, choices=["auto", "small", "base", "tiny"], default="auto",
+                        help="PF-UNet model variant: auto (inspects checkpoint weights), small (~930K), base (~3.6M), tiny (~230K) (default: auto)")
     parser.add_argument("--suite", type=str, default="all",
                         choices=["all", "benchmark", "sd1", "sd2", "custom"],
                         help="Dataset suite to evaluate: all (16 datasets), benchmark (4 public benchmarks), sd1 (6 datasets), sd2 (6 datasets), custom")
@@ -116,7 +118,34 @@ def main():
 
     # 1. Model Selection
     if args.model.lower() == "pfunet":
-        model_params = copy.deepcopy(cfg.PFUNET_PARAMS)
+        model_size = args.model_size
+        if model_size == "auto":
+            try:
+                ckpt = torch.load(model_path_abs, map_location="cpu")
+                if "film.weight" in ckpt:
+                    d_dim = ckpt["film.weight"].shape[1]
+                elif "mach_attn.enc.layers.0.linear1.weight" in ckpt:
+                    d_dim = ckpt["mach_attn.enc.layers.0.linear1.weight"].shape[1]
+                else:
+                    d_dim = 128
+                if d_dim == 256:
+                    model_size = "base"
+                elif d_dim == 64:
+                    model_size = "tiny"
+                else:
+                    model_size = "small"
+                print(f"[INFO] Auto-detected PF-UNet model size: {model_size.upper()} (bottleneck dim={d_dim})")
+            except Exception as e:
+                model_size = "small"
+                print(f"[WARN] Could not auto-detect model size ({e}), defaulting to SMALL")
+
+        if model_size == "base":
+            model_params = copy.deepcopy(cfg.PFUNET_BASE_PARAMS)
+        elif model_size == "tiny":
+            model_params = copy.deepcopy(cfg.PFUNET_TINY_PARAMS)
+        else:
+            model_params = copy.deepcopy(cfg.PFUNET_SMALL_PARAMS)
+
         if args.algo.lower() == "reinforce":
             model_params["rl_algo"] = "reinforce"
         else:

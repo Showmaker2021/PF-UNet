@@ -137,11 +137,14 @@ def readout(maps, xy, B: int, M: int):
 
 class ConvBlock(nn.Module):
     """Conv3x3 + GroupNorm + GELU"""
-    def __init__(self, c_in: int, c_out: int, groups: int = 8):
+    def __init__(self, c_in: int, c_out: int, groups: int = 4):
         super().__init__()
+        g = groups
+        while g > 1 and (c_out % g != 0):
+            g //= 2
         self.net = nn.Sequential(
             nn.Conv2d(c_in, c_out, 3, padding=1),
-            nn.GroupNorm(groups, c_out),
+            nn.GroupNorm(g, c_out),
             nn.GELU()
         )
 
