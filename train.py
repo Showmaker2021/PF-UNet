@@ -113,25 +113,40 @@ def main():
     # 4. Epochs, Batch Size & Episodes (Auto-matched to ReSched Appendix B.2)
     # "Due to resource constraints, for larger sized problem, 
     # the number of training instances per epoch is reduced to 500 and the batch size to 24."
+    # 4. Epochs, Batch Size, Episodes & LR Milestones
     is_large_size = (num_machines >= 10)
     effective_batch_size = args.batch_size if args.batch_size is not None else (24 if is_large_size else 50)
     effective_episodes = 500 if is_large_size else 1000
 
-    if args.epochs is not None:
-        runner_params["training"]["epochs"] = args.epochs
-    elif args.small_budget:
-        runner_params["training"]["epochs"] = 80 if args.algo.lower() == "reinforce" else 400
+    total_epochs = args.epochs if args.epochs is not None else (400 if args.algo.lower() == "ppo" else 2000)
+    if args.small_budget:
+        total_epochs = 200 if args.algo.lower() == "ppo" else 80
+    runner_params["training"]["epochs"] = total_epochs
 
     if args.algo.lower() == "reinforce":
         runner_params["training"]["batch_size"] = effective_batch_size
         runner_params["training"]["episode"] = effective_episodes
+        if total_epochs == 2000:
+            optimizer_params["scheduler"]["milestones"] = [500, 1000, 1500]
+        else:
+            optimizer_params["scheduler"]["milestones"] = [
+                max(1, int(total_epochs * 0.25)),
+                max(2, int(total_epochs * 0.50)),
+                max(3, int(total_epochs * 0.75)),
+            ]
     else:
+        # PPO: Each epoch collects a single rollout buffer of size `sample_batch_size`
         runner_params["training"]["sample_batch_size"] = effective_batch_size
         runner_params["training"]["episode"] = effective_batch_size
         mini_bs = args.mini_batch_size if args.mini_batch_size is not None else effective_batch_size
         runner_params["training"]["mini_batch_size"] = min(effective_batch_size, mini_bs)
         if args.k_epochs is not None:
             runner_params["training"]["K_epochs"] = args.k_epochs
+
+        # Auto-scale PPO LR scheduler milestones to [50%, 80%] of total_epochs (e.g., [200, 320] for 400 epochs)
+        m1 = max(1, int(total_epochs * 0.50))
+        m2 = max(m1 + 1, int(total_epochs * 0.80))
+        optimizer_params["scheduler"]["milestones"] = [m1, m2]
 
     # 5. Device Configuration
     dev_str = detect_device(args.device)
@@ -165,6 +180,7 @@ def main():
     print(f"Problem Size    : {num_jobs} Jobs x {num_machines} Machines")
     print(f"Device          : {dev_str.upper()}")
     print(f"Total Epochs    : {runner_params['training']['epochs']}")
+    print(f"LR Milestones   : {optimizer_params['scheduler']['milestones']} (gamma={optimizer_params['scheduler'].get('gamma', 0.5)})")
     print(f"Batch Size      : {effective_batch_size}")
     if args.algo.lower() == "reinforce":
         print(f"Episodes/Epoch  : {effective_episodes}")

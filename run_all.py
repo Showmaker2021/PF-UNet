@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument("--dataset", type=str, choices=["SD1", "SD2", "all"], default="SD1",
                         help="Dataset to train: SD1 (4 sizes), SD2 (4 sizes), or all (8 sizes total) (default: SD1)")
     parser.add_argument("--epochs", type=int, default=None,
-                        help="Override number of epochs (default: 2000)")
+                        help="Override number of epochs (default: 400 for PPO, 2000 for REINFORCE)")
     parser.add_argument("--small-budget", action="store_true",
                         help="Quick test run on all sizes (80 epochs for reinforce)")
     parser.add_argument("--device", type=str, default="auto",
