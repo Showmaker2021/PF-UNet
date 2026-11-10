@@ -16,8 +16,12 @@ def parse_args():
                         help="RL algorithm (default: reinforce)")
     parser.add_argument("--model", type=str, choices=["pfunet", "resched"], default="pfunet",
                         help="Model architecture (default: pfunet)")
+    parser.add_argument("--model-size", type=str, choices=["small", "base", "tiny"], default="small",
+                        help="PF-UNet model variant: small (~930K params, matched 1:1 with ReSched), base (~3.6M params), or tiny (~230K params) (default: small)")
     parser.add_argument("--dataset", type=str, choices=["SD1", "SD2", "all"], default="SD1",
                         help="Dataset to train: SD1 (4 sizes), SD2 (4 sizes), or all (8 sizes total) (default: SD1)")
+    parser.add_argument("--sizes", type=str, nargs="+", default=None,
+                        help="Subset of sizes to run (default: 10x5 20x5 15x10 20x10)")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override number of epochs (default: 400 for PPO, 2000 for REINFORCE)")
     parser.add_argument("--small-budget", action="store_true",
@@ -30,14 +34,16 @@ def parse_args():
 def main():
     args = parse_args()
     datasets_to_run = ["SD1", "SD2"] if args.dataset.lower() == "all" else [args.dataset.upper()]
-    total_runs = len(datasets_to_run) * len(SIZES)
+    target_sizes = args.sizes if args.sizes else SIZES
+    total_runs = len(datasets_to_run) * len(target_sizes)
 
     print("=" * 75)
     print("        BATCH SEQUENTIAL TRAINING SUITE FOR TABLE 1")
     print(f"Algorithm       : {args.algo.upper()}")
-    print(f"Model           : {args.model.upper()}")
+    model_desc = f"{args.model.upper()} ({args.model_size.upper()})" if args.model.lower() == "pfunet" else args.model.upper()
+    print(f"Model           : {model_desc}")
     print(f"Datasets        : {', '.join(datasets_to_run)}")
-    print(f"Sizes per ds    : {', '.join(SIZES)}")
+    print(f"Sizes per ds    : {', '.join(target_sizes)}")
     print(f"Total Runs      : {total_runs} models to train")
     print("=" * 75)
 
@@ -45,7 +51,7 @@ def main():
     start_time_all = time.time()
 
     for ds in datasets_to_run:
-        for size in SIZES:
+        for size in target_sizes:
             run_count += 1
             print(f"\n[{run_count}/{total_runs}] Starting training: Dataset={ds}, Size={size}...")
             start_t = time.time()
@@ -54,6 +60,7 @@ def main():
                 sys.executable, "train.py",
                 "--algo", args.algo,
                 "--model", args.model,
+                "--model-size", args.model_size,
                 "--dataset", ds,
                 "--size", size,
                 "--device", args.device,
