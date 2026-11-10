@@ -113,7 +113,7 @@ def main():
     # 4. Epochs, Batch Size & Episodes (Auto-matched to ReSched Appendix B.2)
     # "Due to resource constraints, for larger sized problem, 
     # the number of training instances per epoch is reduced to 500 and the batch size to 24."
-    is_large_size = (num_jobs >= 15 or num_machines >= 10)
+    is_large_size = (num_machines >= 10)
     effective_batch_size = args.batch_size if args.batch_size is not None else (24 if is_large_size else 50)
     effective_episodes = 500 if is_large_size else 1000
 
@@ -127,6 +127,7 @@ def main():
         runner_params["training"]["episode"] = effective_episodes
     else:
         runner_params["training"]["sample_batch_size"] = effective_batch_size
+        runner_params["training"]["episode"] = effective_batch_size
         mini_bs = args.mini_batch_size if args.mini_batch_size is not None else effective_batch_size
         runner_params["training"]["mini_batch_size"] = min(effective_batch_size, mini_bs)
         if args.k_epochs is not None:
