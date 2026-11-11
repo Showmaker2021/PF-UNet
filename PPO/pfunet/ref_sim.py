@@ -118,12 +118,24 @@ def ref_obs(sim: RefSim, eps: float = 1e-6, job_order: list = None) -> RefObs:
                 p_hd[idx, k] = hd_durs[k]
         nM_hd[idx] = max(float(ok_hd[idx].sum()), 1.0)
 
-    # 2. Normalization bounds
+    # 2. Normalization bounds (ignore disconnected/dead machines)
+    alive_m = np.zeros(M, dtype=bool)
+    dur_ref = eps
+    for j in alive:
+        for op in sim.jobs[j][sim.ptr[j]:]:
+            op_valid = (sim.dur[op] < np.inf) & (sim.dur[op] > 0)
+            alive_m |= op_valid
+            if op_valid.any():
+                dur_ref = max(dur_ref, float(sim.dur[op, op_valid].max()))
+    if not alive_m.any():
+        alive_m[:] = True
+    Ma = max(float(alive_m.sum()), 1.0)
+
     A = sim.A.copy()  # [M]
-    t0 = A.min()
+    t0 = A[alive_m].min()
     Rt = np.maximum(R, t0)
     LBj = (Rt + W).max()
-    LB = max(LBj, A.max())
+    LB = max(LBj, A[alive_m].max())
     S = max(LB - t0, eps)
 
     # 3. Features layout [M, J]
@@ -133,18 +145,20 @@ def ref_obs(sim: RefSim, eps: float = 1e-6, job_order: list = None) -> RefObs:
     
     x = np.clip((ST - t0) / S, 0.0, 1.0)
     y = np.clip(np.broadcast_to(W[None, :] / S, (M, J)), 0.0, 1.0)
-    wait = (ST - A[:, None]) / S
+    wait_gap = np.maximum(ST - A[:, None], 0.0)
+    wait = np.clip(wait_gap / (wait_gap + np.maximum(P, eps)), 0.0, 1.0)
     max_n = max(n.max(), 1.0)
     prog = np.broadcast_to((n / max_n)[None, :], (M, J))
-    flex = np.broadcast_to((nM_hd / M)[None, :], (M, J))
-    pmin_ratio = P / np.maximum(p_min[None, :], eps)
+    flex = np.clip(np.broadcast_to((nM_hd / Ma)[None, :], (M, J)), 0.0, 1.0)
+    p_norm = np.clip(P / dur_ref, 0.0, 1.0)
+    p_fast = np.clip(np.maximum(p_min[None, :], eps) / np.maximum(P, eps), 0.0, 1.0) * OK.astype(float)
 
     xy = np.stack([x, y], axis=-1)  # [M, J, 2]
-    feats = np.stack([np.ones_like(x), P / S, flex, wait, prog], axis=-1)  # [M, J, 5]
-    raw = np.stack([P / S, pmin_ratio, wait, x, y, flex, prog], axis=-1)  # [M, J, 7]
+    feats = np.stack([np.ones_like(x), p_norm, flex, wait, prog], axis=-1)  # [M, J, 5]
+    raw = np.stack([p_norm, p_fast, wait, x, y, flex, prog], axis=-1)  # [M, J, 7]
 
     # 4. Machine constant channels: c6, c7
-    c6 = (A - t0) / S  # [M]
+    c6 = np.maximum((A - t0) / S, 0.0) * alive_m.astype(float)  # [M]
     
     # c7: future load for operations strictly after current head
     L = np.zeros(M, dtype=float)
@@ -158,7 +172,7 @@ def ref_obs(sim: RefSim, eps: float = 1e-6, job_order: list = None) -> RefObs:
                 if valid_mask[k]:
                     L[k] += op_durs[k] / nM_op
     
-    c7 = L / (L.sum() + eps)
+    c7 = (Ma * L / (L.sum() + eps)) * alive_m.astype(float)
     const = np.stack([c6, c7], axis=-1)  # [M, 2]
 
     return RefObs(xy, feats, raw, OK, const, alive, S)

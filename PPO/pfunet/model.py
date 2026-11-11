@@ -62,7 +62,7 @@ class SchedulingModel(nn.Module):
         skips, h = self.unet.encode(canvas)
         
         # 3. Machine Attention on pooled bottleneck [B, M, D]
-        g = self.mach_attn(h.mean((2, 3)).view(B, M, -1))
+        g = self.mach_attn(h.mean((2, 3)).view(B, M, -1), alive_m=obs.alive_m)
         
         # 4. FiLM conditioning from machine representation g onto bottleneck h
         gam, bet = self.film(g).chunk(2, -1)
@@ -80,7 +80,14 @@ class SchedulingModel(nn.Module):
         features = torch.cat([f0, f1, obs.raw, gk], dim=-1)  # [B, M, J, 359]
         score = self.head(features).squeeze(-1)  # [B, M, J]
         logits = score.masked_fill(~obs.mask_pair, float('-inf'))
-        value = self.critic(g.mean(1)).squeeze(-1) if self.critic is not None else None
+        if self.critic is not None:
+            if obs.alive_m is not None:
+                g_pool = (g * obs.alive_m.to(g.dtype)[..., None]).sum(1) / obs.alive_m.sum(1, keepdim=True).clamp_min(1)
+            else:
+                g_pool = g.mean(1)
+            value = self.critic(g_pool).squeeze(-1)
+        else:
+            value = None
         
         return logits, value
 

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-Obs = namedtuple('Obs', 'xy feats raw mask_pair const head_idx has_head Ja S')
+Obs = namedtuple('Obs', 'xy feats raw mask_pair const head_idx has_head Ja S alive_m', defaults=(None,))
 
 
 def build_pf_obs(state, eps: float = 1e-6) -> Obs:
@@ -38,12 +38,16 @@ def build_pf_obs(state, eps: float = 1e-6) -> Obs:
     ok_hd = act_mask.gather(1, safe[..., None].expand(B, J, M)) & has_head[..., None]  # [B, J, M]
     nM_hd = ok_hd.sum(-1).clamp_min(1).to(dur.dtype)  # [B, J] compatible machine count
 
-    # (4) Normalization bounds
+    # (4) Normalization bounds (ignore disconnected/dead machines whose m_at is unshifted)
+    alive_m = dep_m.any(1)  # [B, M] bool
+    has_alive_m = alive_m.any(1, keepdim=True)
+    alive_m = torch.where(has_alive_m, alive_m, torch.ones_like(alive_m))
+
     A = m_at  # [B, M]
-    t0 = A.min(1).values  # [B]
+    t0 = A.masked_fill(~alive_m, float('inf')).min(1).values  # [B]
     Rt = torch.maximum(R, t0[:, None])
     LBj = (Rt + W).masked_fill(~has_head, float('-inf')).max(1).values
-    LB = torch.maximum(LBj, A.max(1).values)
+    LB = torch.maximum(LBj, A.masked_fill(~alive_m, float('-inf')).max(1).values)
     S = (LB - t0).clamp_min(eps)  # [B]
 
     # (5) Layout [B, M, J]
@@ -51,26 +55,30 @@ def build_pf_obs(state, eps: float = 1e-6) -> Obs:
     OK = ok_hd.permute(0, 2, 1)  # [B, M, J] bool
     ST = torch.maximum(R[:, None, :], A[:, :, None])  # [B, M, J]
     S3 = S[:, None, None]
+    Ma = alive_m.sum(1, keepdim=True).to(dur.dtype).clamp_min(1)  # [B, 1]
+    dur_ref = dur.masked_fill(~dep_m, 0.0).amax(dim=(1, 2)).clamp_min(eps)[:, None, None]
     x = ((ST - t0[:, None, None]) / S3).clamp(0.0, 1.0)
     y = (W / S[:, None])[:, None, :].expand(B, M, J).clamp(0.0, 1.0)
-    wait = (ST - A[:, :, None]) / S3
+    wait_gap = (ST - A[:, :, None]).clamp_min(0.0)
+    wait = (wait_gap / (wait_gap + P.clamp_min(eps))).clamp(0.0, 1.0)
     prog = (n / n.max(1, keepdim=True).values.clamp_min(1))[:, None, :].expand(B, M, J)  # D3
-    flex = (nM_hd / M)[:, None, :].expand(B, M, J)
-    pmin_ratio = P / p_min.clamp_min(eps)[:, None, :]
+    flex = (nM_hd / Ma)[:, None, :].expand(B, M, J).clamp(0.0, 1.0)
+    p_norm = (P / dur_ref).clamp(0.0, 1.0)
+    p_fast = (p_min.clamp_min(eps)[:, None, :] / P.clamp_min(eps)).clamp(0.0, 1.0) * OK.to(P.dtype)
 
     xy = torch.stack([x, y], -1)  # [B, M, J, 2]
-    feats = torch.stack([torch.ones_like(x), P / S3, flex, wait, prog], -1)  # [B, M, J, 5] channels 1..5
-    raw = torch.stack([P / S3, pmin_ratio, wait, x, y, flex, prog], -1)  # [B, M, J, 7]
+    feats = torch.stack([torch.ones_like(x), p_norm, flex, wait, prog], -1)  # [B, M, J, 5] channels 1..5
+    raw = torch.stack([p_norm, p_fast, wait, x, y, flex, prog], -1)  # [B, M, J, 7]
 
-    # (6) Machine constant channels: c6 (machine idle time), c7 (future load share)
+    # (6) Machine constant channels: c6 (machine idle time), c7 (future load relative to active avg)
     nM_all = dep_m.sum(-1).clamp_min(1).to(dur.dtype)  # [B, N]
     L = ((dur / nM_all[..., None]) * (~head)[..., None]).sum(1)  # [B, M] load of future ops
-    c6 = (A - t0[:, None]) / S[:, None]
-    c7 = L / (L.sum(1, keepdim=True) + eps)
+    c6 = ((A - t0[:, None]) / S[:, None]).clamp_min(0.0) * alive_m.to(A.dtype)
+    c7 = (Ma * L / (L.sum(1, keepdim=True) + eps)) * alive_m.to(A.dtype)
     const = torch.stack([c6, c7], -1)  # [B, M, 2]
 
     Ja = has_head.sum(1).clamp_min(1).to(dur.dtype)  # [B]
-    return Obs(xy, feats, raw, OK, const, order, has_head, Ja, S)
+    return Obs(xy, feats, raw, OK, const, order, has_head, Ja, S, alive_m)
 
 
 def rasterize(xy, vals, mask, H: int, W: int):
@@ -115,7 +123,11 @@ def rasterize_obs(obs: Obs, H: int, W: int):
     c = rasterize(obs.xy, obs.feats, obs.mask_pair, H, W)  # [B*M, 5, H, W]
     c = c / obs.Ja.repeat_interleave(M)[:, None, None, None]  # divide by J_a
     const = obs.const.reshape(B * M, 2, 1, 1).expand(-1, -1, H, W)  # channels 6, 7
-    ctx = c[:, :1].view(B, M, 1, H, W).mean(1, keepdim=True)  # channel 8: mean across machines of ch 0
+    if obs.alive_m is not None:
+        ma = obs.alive_m.sum(1).clamp_min(1).to(c.dtype)[:, None, None, None, None]  # [B, 1, 1, 1, 1]
+        ctx = (c[:, :1].view(B, M, 1, H, W) * obs.alive_m.to(c.dtype).view(B, M, 1, 1, 1)).sum(1, keepdim=True) / ma
+    else:
+        ctx = c[:, :1].view(B, M, 1, H, W).mean(1, keepdim=True)  # channel 8: mean across machines of ch 0
     ctx = ctx.expand(B, M, 1, H, W).reshape(B * M, 1, H, W)
     return torch.cat([c, const, ctx], 1)  # [B*M, 8, H, W]
 
@@ -208,8 +220,9 @@ class MachineAttention(nn.Module):
         layer = nn.TransformerEncoderLayer(dim, heads, ff, batch_first=True, norm_first=True, dropout=0.0)
         self.enc = nn.TransformerEncoder(layer, layers)
 
-    def forward(self, g):
-        return self.enc(g)  # [B, M, dim]
+    def forward(self, g, alive_m=None):
+        pad_mask = (~alive_m) if alive_m is not None else None
+        return self.enc(g, src_key_padding_mask=pad_mask)  # [B, M, dim]
 
 
 class MLP(nn.Module):
