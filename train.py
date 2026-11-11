@@ -160,7 +160,7 @@ def main():
     dev_str = detect_device(args.device)
     runner_params["use_cuda"] = (dev_str in ("cuda", "mps"))
     if dev_str == "cuda":
-        torch.backends.cudnn.enabled = False
+        torch.backends.cudnn.enabled = (args.model.lower() == "pfunet")
 
     # 6. Test Suite to run immediately after training
     # Match the datasets evaluated in Table 1

@@ -39,15 +39,16 @@ class Runner:
         self.optimizer_params = optimizer_params
         self.runner_params = runner_params
 
+        mp = dict(model_params)
+        model_type = mp.pop('model_type', 'resched')
+
         self.device = self._configure_device()
         torch.set_default_dtype(torch.float32)
         if self.device.type == 'mps':
             torch.set_default_device(self.device)
         elif self.device.type == 'cuda':
-            torch.backends.cudnn.enabled = False
+            torch.backends.cudnn.enabled = (model_type == 'pfunet')
 
-        mp = dict(model_params)
-        model_type = mp.pop('model_type', 'resched')
         ModelCls = PFUNetModel if model_type == 'pfunet' else Model
         self.model = ModelCls(**mp).to(self.device)
         self.test_only_flag = self.runner_params.get('test_only', False)
