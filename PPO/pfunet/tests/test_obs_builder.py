@@ -10,7 +10,7 @@ if ppo_dir not in sys.path:
 from SchedulingEnvironment import FJSPEnv
 from SchedulingModel import build_model_input
 from pfunet.ref_sim import RefSim, to_ref, ref_obs
-from pfunet.modules import build_pf_obs
+from pfunet.modules import build_pf_obs, rasterize
 
 def test_obs_builder(num_states_to_check=200):
     print(f"Testing build_pf_obs against ref_obs on {num_states_to_check} random states...")
@@ -62,6 +62,16 @@ def test_obs_builder(num_states_to_check=200):
             assert np.allclose(obs_raw, ref.raw, atol=1e-5), f"raw mismatch at state {checked+1}"
             assert np.allclose(obs_const, ref.const, atol=1e-5), f"const mismatch at state {checked+1}"
             assert (obs_ok == ref.mask_pair).all(), f"mask_pair mismatch at state {checked+1}"
+
+            fut_canvas_obs = rasterize(obs.fut_xy, obs.fut_feats, obs.fut_mask, 64, 64)[0:].cpu().numpy()
+            fut_canvas_ref = rasterize(
+                torch.tensor(ref.fut_xy, dtype=obs.fut_xy.dtype).unsqueeze(0),
+                torch.tensor(ref.fut_feats, dtype=obs.fut_feats.dtype).unsqueeze(0),
+                torch.tensor(ref.fut_mask, dtype=torch.bool).unsqueeze(0),
+                64, 64
+            ).cpu().numpy()
+            assert np.allclose(fut_canvas_obs, fut_canvas_ref, atol=1e-4), f"fut_canvas mismatch at state {checked+1}"
+            assert np.allclose(fut_canvas_obs.sum(), fut_canvas_ref.sum(), atol=1e-5), f"fut_canvas mass mismatch at state {checked+1}"
             
             checked += 1
             if checked % 50 == 0 or checked == num_states_to_check:

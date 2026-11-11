@@ -19,7 +19,7 @@ class SchedulingModel(nn.Module):
     """
     def __init__(self,
                  canvas_hw=(64, 64),
-                 c_in: int = 8,
+                 c_in: int = 10,
                  unet_channels=(16, 32, 64, 128),
                  blocks_per_level: int = 2,
                  gn_groups: int = 4,
@@ -28,7 +28,7 @@ class SchedulingModel(nn.Module):
                  attn_ff: int = 256,
                  head_hidden=(128, 64),
                  critic_hidden: int = 128,
-                 raw_dim: int = 7,
+                 raw_dim: int = 12,
                  rl_algo: str = 'ppo',
                  **kwargs):
         super().__init__()

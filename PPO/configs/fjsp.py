@@ -104,7 +104,7 @@ PFUNET_BASE_PARAMS = {
     'model_type': 'pfunet',
     'model_size': 'base',
     'canvas_hw': (64, 64),
-    'c_in': 8,
+    'c_in': 10,
     'unet_channels': (32, 64, 128, 256),
     'blocks_per_level': 2,
     'gn_groups': 8,
@@ -113,7 +113,7 @@ PFUNET_BASE_PARAMS = {
     'attn_ff': 512,
     'head_hidden': (128, 64),
     'critic_hidden': 128,
-    'raw_dim': 7,
+    'raw_dim': 12,
 }
 
 # PFUNET_SMALL_PARAMS (~930K params, matched 1:1 with ReSched's 842K params)
@@ -121,7 +121,7 @@ PFUNET_SMALL_PARAMS = {
     'model_type': 'pfunet',
     'model_size': 'small',
     'canvas_hw': (64, 64),
-    'c_in': 8,
+    'c_in': 10,
     'unet_channels': (16, 32, 64, 128),
     'blocks_per_level': 2,
     'gn_groups': 4,
@@ -130,14 +130,14 @@ PFUNET_SMALL_PARAMS = {
     'attn_ff': 256,
     'head_hidden': (128, 64),
     'critic_hidden': 128,
-    'raw_dim': 7,
+    'raw_dim': 12,
 }
 
 PFUNET_TINY_PARAMS = {
     'model_type': 'pfunet',
     'model_size': 'tiny',
     'canvas_hw': (64, 64),
-    'c_in': 8,
+    'c_in': 10,
     'unet_channels': (16, 32, 64),
     'blocks_per_level': 2,
     'gn_groups': 4,
@@ -146,7 +146,7 @@ PFUNET_TINY_PARAMS = {
     'attn_ff': 128,
     'head_hidden': (64, 32),
     'critic_hidden': 64,
-    'raw_dim': 7,
+    'raw_dim': 12,
 }
 
 # Default PFUNET_PARAMS uses PFUNET_SMALL_PARAMS (~930K params)

@@ -40,7 +40,10 @@ def test_invariance():
             has_head=obs.has_head[:, p_J],
             Ja=obs.Ja,
             S=obs.S,
-            alive_m=obs.alive_m
+            alive_m=obs.alive_m,
+            fut_xy=obs.fut_xy,
+            fut_feats=obs.fut_feats,
+            fut_mask=obs.fut_mask
         )
         perm_J_logits, perm_J_val = model.core(obs_perm_J)
         expected_J_logits = orig_logits[:, :, p_J]
@@ -64,7 +67,10 @@ def test_invariance():
             has_head=obs.has_head,
             Ja=obs.Ja,
             S=obs.S,
-            alive_m=obs.alive_m[:, p_M]
+            alive_m=obs.alive_m[:, p_M],
+            fut_xy=obs.fut_xy[:, p_M, :, :],
+            fut_feats=obs.fut_feats[:, p_M, :, :],
+            fut_mask=obs.fut_mask[:, p_M, :]
         )
         perm_M_logits, perm_M_val = model.core(obs_perm_M)
         expected_M_logits = orig_logits[:, p_M, :]

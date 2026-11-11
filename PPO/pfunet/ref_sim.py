@@ -1,7 +1,8 @@
 import numpy as np
 from collections import namedtuple
 
-RefObs = namedtuple('RefObs', ['xy', 'feats', 'raw', 'mask_pair', 'const', 'alive_jobs', 'S'])
+RefObs = namedtuple('RefObs', ['xy', 'feats', 'raw', 'mask_pair', 'const', 'alive_jobs', 'S',
+                                'fut_xy', 'fut_feats', 'fut_mask'])
 
 class RefSim:
     """
@@ -120,13 +121,10 @@ def ref_obs(sim: RefSim, eps: float = 1e-6, job_order: list = None) -> RefObs:
 
     # 2. Normalization bounds (ignore disconnected/dead machines)
     alive_m = np.zeros(M, dtype=bool)
-    dur_ref = eps
     for j in alive:
         for op in sim.jobs[j][sim.ptr[j]:]:
             op_valid = (sim.dur[op] < np.inf) & (sim.dur[op] > 0)
             alive_m |= op_valid
-            if op_valid.any():
-                dur_ref = max(dur_ref, float(sim.dur[op, op_valid].max()))
     if not alive_m.any():
         alive_m[:] = True
     Ma = max(float(alive_m.sum()), 1.0)
@@ -145,34 +143,99 @@ def ref_obs(sim: RefSim, eps: float = 1e-6, job_order: list = None) -> RefObs:
     
     x = np.clip((ST - t0) / S, 0.0, 1.0)
     y = np.clip(np.broadcast_to(W[None, :] / S, (M, J)), 0.0, 1.0)
-    wait_gap = np.maximum(ST - A[:, None], 0.0)
-    wait = np.clip(wait_gap / (wait_gap + np.maximum(P, eps)), 0.0, 1.0)
+    wait = np.clip((ST - A[:, None]) / S, 0.0, 1.0)
+    job_wait = np.clip((ST - R[None, :]) / S, 0.0, 1.0)
     max_n = max(n.max(), 1.0)
     prog = np.broadcast_to((n / max_n)[None, :], (M, J))
     flex = np.clip(np.broadcast_to((nM_hd / Ma)[None, :], (M, J)), 0.0, 1.0)
-    p_norm = np.clip(P / dur_ref, 0.0, 1.0)
+    p_norm = np.clip(P / S, 0.0, 1.0)
     p_fast = np.clip(np.maximum(p_min[None, :], eps) / np.maximum(P, eps), 0.0, 1.0) * OK.astype(float)
+
+    # 3b. Lookahead & critical-path features [M, J]
+    W_tail = np.maximum(W - p_min, 0.0)
+    lb_push = np.clip(((ST + P + W_tail[None, :]) - LB) / S, -1.0, 1.0)
+    next_p_norm = np.zeros((M, J), dtype=float)
+    next_aff = np.zeros((M, J), dtype=float)
+    tail_aff = np.zeros((M, J), dtype=float)
+
+    for idx, j in enumerate(alive):
+        curr_p = sim.ptr[j]
+        rem_ops = sim.jobs[j][curr_p:]
+        if len(rem_ops) > 1:
+            nxt_op = rem_ops[1]
+            nxt_durs = sim.dur[nxt_op]
+            nxt_valid = (nxt_durs < np.inf) & (nxt_durs > 0)
+            nxt_min = nxt_durs[nxt_valid].min() if nxt_valid.any() else 0.0
+            next_p_norm[:, idx] = np.clip(nxt_min / S, 0.0, 1.0)
+            for k in range(M):
+                if nxt_valid[k]:
+                    next_aff[k, idx] = np.clip(max(nxt_min, eps) / max(nxt_durs[k], eps), 0.0, 1.0)
+        if W_tail[idx] > eps:
+            w_m = np.zeros(M, dtype=float)
+            for op in rem_ops[1:]:
+                op_durs = sim.dur[op]
+                valid_mask = (op_durs < np.inf) & (op_durs > 0)
+                if valid_mask.any():
+                    op_min = op_durs[valid_mask].min()
+                    nM_op = float(valid_mask.sum())
+                    w_m[valid_mask] += op_min / nM_op
+            tail_aff[:, idx] = np.clip(w_m / (W_tail[idx] + eps), 0.0, 1.0)
 
     xy = np.stack([x, y], axis=-1)  # [M, J, 2]
     feats = np.stack([np.ones_like(x), p_norm, flex, wait, prog], axis=-1)  # [M, J, 5]
-    raw = np.stack([p_norm, p_fast, wait, x, y, flex, prog], axis=-1)  # [M, J, 7]
+    raw = np.stack([
+        p_norm, p_fast, wait, job_wait, x, y, flex, prog,
+        lb_push, next_p_norm, next_aff, tail_aff,
+    ], axis=-1)  # [M, J, 12]
 
     # 4. Machine constant channels: c6, c7
     c6 = np.maximum((A - t0) / S, 0.0) * alive_m.astype(float)  # [M]
     
-    # c7: future load for operations strictly after current head
+    # c7: future load for operations strictly after current head + future field
     L = np.zeros(M, dtype=float)
-    for j in range(sim.num_jobs):
-        fut_ops = sim.jobs[j][sim.ptr[j] + 1:]
-        for op in fut_ops:
-            op_durs = sim.dur[op]
-            valid_mask = (op_durs < np.inf) & (op_durs > 0)
-            nM_op = max(float(valid_mask.sum()), 1.0)
-            for k in range(M):
-                if valid_mask[k]:
-                    L[k] += op_durs[k] / nM_op
-    
+    fut_entries = []
+    for j in alive:
+        curr_p = sim.ptr[j]
+        rem_ops = sim.jobs[j][curr_p:]
+        r_acc = sim.R[j]
+        # precompute min durations along remaining ops
+        op_mins = []
+        for op in rem_ops:
+            od = sim.dur[op]
+            vm = (od < np.inf) & (od > 0)
+            op_mins.append(od[vm].min() if vm.any() else 0.0)
+        total_w = sum(op_mins)
+        w_left = total_w
+        for pos_idx, op in enumerate(rem_ops):
+            op_min = op_mins[pos_idx]
+            if pos_idx > 0:
+                op_durs = sim.dur[op]
+                valid_mask = (op_durs < np.inf) & (op_durs > 0)
+                if valid_mask.any():
+                    nM_op = float(valid_mask.sum())
+                    for k in range(M):
+                        if valid_mask[k]:
+                            L[k] += op_durs[k] / nM_op
+                    fut_entries.append((r_acc, w_left, valid_mask.copy(), nM_op))
+            r_acc += op_min
+            w_left -= op_min
+
     c7 = (Ma * L / (L.sum() + eps)) * alive_m.astype(float)
     const = np.stack([c6, c7], axis=-1)  # [M, 2]
 
-    return RefObs(xy, feats, raw, OK, const, alive, S)
+    N_fut = max(len(fut_entries), 1)
+    K_fut = len(fut_entries)
+    fut_xy = np.zeros((M, K_fut, 2), dtype=float)
+    fut_feats = np.zeros((M, K_fut, 2), dtype=float)
+    fut_mask = np.zeros((M, K_fut), dtype=bool)
+    for fi, (r_op, w_op, vmask, nM_op) in enumerate(fut_entries):
+        st_op = np.maximum(r_op, A)
+        fut_xy[:, fi, 0] = np.clip((st_op - t0) / S, 0.0, 1.0)
+        fut_xy[:, fi, 1] = np.clip(w_op / S, 0.0, 1.0)
+        fut_mask[:, fi] = vmask
+        dem = (Ma / N_fut) / nM_op
+        crit = np.clip((r_op + w_op - t0) / S, 0.0, 1.0)
+        fut_feats[:, fi, 0] = dem
+        fut_feats[:, fi, 1] = dem * crit
+
+    return RefObs(xy, feats, raw, OK, const, alive, S, fut_xy, fut_feats, fut_mask)

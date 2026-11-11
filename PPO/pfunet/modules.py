@@ -3,7 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-Obs = namedtuple('Obs', 'xy feats raw mask_pair const head_idx has_head Ja S alive_m', defaults=(None,))
+Obs = namedtuple('Obs', 'xy feats raw mask_pair const head_idx has_head Ja S alive_m fut_xy fut_feats fut_mask',
+                 defaults=(None, None, None, None))
 
 
 def build_pf_obs(state, eps: float = 1e-6) -> Obs:
@@ -56,29 +57,80 @@ def build_pf_obs(state, eps: float = 1e-6) -> Obs:
     ST = torch.maximum(R[:, None, :], A[:, :, None])  # [B, M, J]
     S3 = S[:, None, None]
     Ma = alive_m.sum(1, keepdim=True).to(dur.dtype).clamp_min(1)  # [B, 1]
-    dur_ref = dur.masked_fill(~dep_m, 0.0).amax(dim=(1, 2)).clamp_min(eps)[:, None, None]
     x = ((ST - t0[:, None, None]) / S3).clamp(0.0, 1.0)
     y = (W / S[:, None])[:, None, :].expand(B, M, J).clamp(0.0, 1.0)
-    wait_gap = (ST - A[:, :, None]).clamp_min(0.0)
-    wait = (wait_gap / (wait_gap + P.clamp_min(eps))).clamp(0.0, 1.0)
+    wait = ((ST - A[:, :, None]) / S3).clamp(0.0, 1.0)
+    job_wait = ((ST - R[:, None, :]) / S3).clamp(0.0, 1.0)
     prog = (n / n.max(1, keepdim=True).values.clamp_min(1))[:, None, :].expand(B, M, J)  # D3
     flex = (nM_hd / Ma)[:, None, :].expand(B, M, J).clamp(0.0, 1.0)
-    p_norm = (P / dur_ref).clamp(0.0, 1.0)
+    p_norm = (P / S3).clamp(0.0, 1.0)
     p_fast = (p_min.clamp_min(eps)[:, None, :] / P.clamp_min(eps)).clamp(0.0, 1.0) * OK.to(P.dtype)
 
+    # (5b) Lookahead & critical-path features for [B, M, J]
+    W_tail = (W - p_min).clamp_min(0.0)  # [B, J] tail work strictly after head
+    lb_after = ST + P + W_tail[:, None, :]  # [B, M, J]
+    lb_push = ((lb_after - LB[:, None, None]) / S3).clamp(-1.0, 1.0)
+
+    dep_o_f = dep_o.to(dur.dtype)
+    rank_in_job = torch.bmm(Gf, dep_o_f)  # [B, J, N]: 1=head, 2=immediate next op
+    is_next = (rank_in_job > 1.5) & (rank_in_job < 2.5) & has_head[..., None]
+    has_next = is_next.any(-1)  # [B, J]
+    is_next_f = is_next.to(dur.dtype)
+    p_next_min = (is_next_f @ min_dur[..., None]).squeeze(-1)  # [B, J]
+    next_p_norm = (p_next_min[:, None, :] / S3).expand(B, M, J).clamp(0.0, 1.0)
+    p_next_m = torch.bmm(is_next_f, dur).permute(0, 2, 1)  # [B, M, J]
+    next_ok_m = (torch.bmm(is_next_f, dep_m.to(dur.dtype)).permute(0, 2, 1) > 0.5) & has_next[:, None, :]
+    next_aff = torch.where(
+        next_ok_m,
+        (p_next_min[:, None, :].clamp_min(eps) / p_next_m.clamp_min(eps)).clamp(0.0, 1.0),
+        torch.zeros_like(P),
+    )
+
+    nM_all = dep_m.sum(-1).clamp_min(1).to(dur.dtype)  # [B, N]
+    G_tail_f = (G & (~head[:, None, :])).to(dur.dtype)  # [B, J, N]
+    w_op_on_m = (min_dur / nM_all)[..., None] * dep_m.to(dur.dtype)  # [B, N, M]
+    w_tail_on_m = torch.bmm(G_tail_f, w_op_on_m).permute(0, 2, 1)  # [B, M, J]
+    tail_aff = torch.where(
+        W_tail[:, None, :] > eps,
+        (w_tail_on_m / (W_tail[:, None, :] + eps)).clamp(0.0, 1.0),
+        torch.zeros_like(P),
+    )
+
     xy = torch.stack([x, y], -1)  # [B, M, J, 2]
-    feats = torch.stack([torch.ones_like(x), p_norm, flex, wait, prog], -1)  # [B, M, J, 5] channels 1..5
-    raw = torch.stack([p_norm, p_fast, wait, x, y, flex, prog], -1)  # [B, M, J, 7]
+    feats = torch.stack([torch.ones_like(x), p_norm, flex, wait, prog], -1)  # [B, M, J, 5] channels 0..4
+    raw = torch.stack([
+        p_norm, p_fast, wait, job_wait, x, y, flex, prog,
+        lb_push, next_p_norm, next_aff, tail_aff,
+    ], -1)  # [B, M, J, 12]
 
     # (6) Machine constant channels: c6 (machine idle time), c7 (future load relative to active avg)
-    nM_all = dep_m.sum(-1).clamp_min(1).to(dur.dtype)  # [B, N]
     L = ((dur / nM_all[..., None]) * (~head)[..., None]).sum(1)  # [B, M] load of future ops
     c6 = ((A - t0[:, None]) / S[:, None]).clamp_min(0.0) * alive_m.to(A.dtype)
     c7 = (Ma * L / (L.sum(1, keepdim=True) + eps)) * alive_m.to(A.dtype)
     const = torch.stack([c6, c7], -1)  # [B, M, 2]
 
+    # (7) Future operations field (~head) for canvas channels 8..9
+    eye_N = torch.eye(N, dtype=torch.bool, device=dep_o.device)[None]
+    strict_pred_f = (dep_o & (~eye_N)).to(dur.dtype)
+    R_job_of_o = torch.bmm(dep_o_f.transpose(1, 2), (head.to(dur.dtype) * o_at)[..., None]).squeeze(-1)  # [B, N]
+    pred_min_sum = torch.bmm(strict_pred_f.transpose(1, 2), min_dur[..., None]).squeeze(-1)  # [B, N]
+    R_all = R_job_of_o + pred_min_sum  # [B, N]
+    W_all = torch.bmm(dep_o_f, min_dur[..., None]).squeeze(-1)  # [B, N]
+
+    fut_op_mask = (~head) & dep_m.any(-1)  # [B, N]
+    fut_mask = fut_op_mask[:, None, :] & dep_m.permute(0, 2, 1)  # [B, M, N]
+    ST_fut = torch.maximum(R_all[:, None, :], A[:, :, None])  # [B, M, N]
+    x_fut = ((ST_fut - t0[:, None, None]) / S3).clamp(0.0, 1.0)
+    y_fut = (W_all[:, None, :] / S3).expand(B, M, N).clamp(0.0, 1.0)
+    fut_xy = torch.stack([x_fut, y_fut], -1)  # [B, M, N, 2]
+
+    N_fut = fut_op_mask.sum(1).clamp_min(1).to(dur.dtype)[:, None, None]  # [B, 1, 1]
+    dem = ((Ma[:, :, None] / N_fut) * (1.0 / nM_all)[:, None, :]).expand(B, M, N)  # [B, M, N]
+    crit = ((R_all + W_all - t0[:, None]) / S[:, None]).clamp(0.0, 1.0)[:, None, :].expand(B, M, N)
+    fut_feats = torch.stack([dem, dem * crit], -1)  # [B, M, N, 2]
+
     Ja = has_head.sum(1).clamp_min(1).to(dur.dtype)  # [B]
-    return Obs(xy, feats, raw, OK, const, order, has_head, Ja, S, alive_m)
+    return Obs(xy, feats, raw, OK, const, order, has_head, Ja, S, alive_m, fut_xy, fut_feats, fut_mask)
 
 
 def rasterize(xy, vals, mask, H: int, W: int):
@@ -114,22 +166,27 @@ def rasterize(xy, vals, mask, H: int, W: int):
 
 def rasterize_obs(obs: Obs, H: int, W: int):
     """
-    Rasterizes observation into 8-channel canvas:
-      channels 0..4: bilinear splatted feats (divided by J_a)
+    Rasterizes observation into 10-channel canvas:
+      channels 0..4: bilinear splatted head feats (divided by J_a)
       channels 5..6: machine constants c6, c7 broadcast
-      channel 7: context channel (machine-average of channel 0)
+      channel 7: context channel (active-machine average of channel 0)
+      channels 8..9: bilinear splatted future-operation demand & criticality field
     """
     B, M, J = obs.mask_pair.shape
     c = rasterize(obs.xy, obs.feats, obs.mask_pair, H, W)  # [B*M, 5, H, W]
     c = c / obs.Ja.repeat_interleave(M)[:, None, None, None]  # divide by J_a
-    const = obs.const.reshape(B * M, 2, 1, 1).expand(-1, -1, H, W)  # channels 6, 7
+    const = obs.const.reshape(B * M, 2, 1, 1).expand(-1, -1, H, W)  # channels 5, 6
     if obs.alive_m is not None:
         ma = obs.alive_m.sum(1).clamp_min(1).to(c.dtype)[:, None, None, None, None]  # [B, 1, 1, 1, 1]
         ctx = (c[:, :1].view(B, M, 1, H, W) * obs.alive_m.to(c.dtype).view(B, M, 1, 1, 1)).sum(1, keepdim=True) / ma
     else:
-        ctx = c[:, :1].view(B, M, 1, H, W).mean(1, keepdim=True)  # channel 8: mean across machines of ch 0
+        ctx = c[:, :1].view(B, M, 1, H, W).mean(1, keepdim=True)  # channel 7: mean across machines of ch 0
     ctx = ctx.expand(B, M, 1, H, W).reshape(B * M, 1, H, W)
-    return torch.cat([c, const, ctx], 1)  # [B*M, 8, H, W]
+    if obs.fut_xy is not None:
+        fut = rasterize(obs.fut_xy, obs.fut_feats, obs.fut_mask, H, W)  # [B*M, 2, H, W]
+    else:
+        fut = c.new_zeros(B * M, 2, H, W)
+    return torch.cat([c, const, ctx, fut], 1)  # [B*M, 10, H, W]
 
 
 def readout(maps, xy, B: int, M: int):
@@ -168,7 +225,7 @@ class UNet2D(nn.Module):
     """
     2D Multi-scale U-Net with skip connections.
     """
-    def __init__(self, c_in: int = 8, chs=(32, 64, 128, 256), blocks: int = 2, groups: int = 8):
+    def __init__(self, c_in: int = 10, chs=(32, 64, 128, 256), blocks: int = 2, groups: int = 8):
         super().__init__()
         L = len(chs)
         self.enc = nn.ModuleList([
