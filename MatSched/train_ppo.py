@@ -122,8 +122,11 @@ def train(args: argparse.Namespace) -> None:
         "ppo": dict(DEFAULT_CONFIG["ppo"]),
         "kd": dict(DEFAULT_CONFIG["kd"]),
     }
+    is_sd1 = args.dataset.upper() == "SD1"
     cfg["env"]["num_jobs"] = args.num_jobs
     cfg["env"]["num_machines"] = args.num_machines
+    cfg["env"]["sd1"] = is_sd1
+    cfg["env"]["max_processing_time"] = 20 if is_sd1 else 99
     cfg["model"]["K"] = args.K
     cfg["model"]["num_layers"] = args.num_layers
     cfg["model"]["ff_mult"] = args.ff_mult
@@ -164,9 +167,16 @@ def train(args: argparse.Namespace) -> None:
     )
     amp_enabled = cfg["ppo"]["use_bf16"] and device.type == "cuda"
 
+    val_path = args.val_path
+    if val_path is None:
+        val_path = (
+            f"data/FJSP/TNNLS/SD1/{args.num_jobs}x{args.num_machines}"
+            if is_sd1
+            else f"data/FJSP/TNNLS/SD2/{args.num_jobs}x{args.num_machines}+mix"
+        )
     val_data, val_ref = None, None
-    if args.val_path:
-        val_data, val_ref = load_fjsp_dataset_and_baseline(args.val_path)
+    if val_path:
+        val_data, val_ref = load_fjsp_dataset_and_baseline(val_path)
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -174,9 +184,10 @@ def train(args: argparse.Namespace) -> None:
 
     train_level = 3
     print(
-        f"Training MatSchedNet on {device} (bf16={amp_enabled}, fixed_width={args.fixed_width}, "
+        f"Training MatSchedNet on {device} | dataset={args.dataset}({args.num_jobs}x{args.num_machines}, pt<={cfg['env']['max_processing_time']}) | "
+        f"val={val_path} | bf16={amp_enabled}, fixed_width={args.fixed_width}, "
         f"KD={cfg['kd']['enabled']}[{cfg['kd']['mode']}, b1={cfg['kd']['beta1']}, b2={cfg['kd']['beta2']}], "
-        f"iters={args.iters}, lr={args.lr}->{args.lr_min})"
+        f"iters={args.iters}, lr={args.lr}->{args.lr_min}"
     )
 
     for it in range(1, args.iters + 1):
@@ -314,6 +325,7 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
+    p.add_argument("--dataset", choices=["SD1", "SD2"], default="SD1")
     p.add_argument("--num_jobs", type=int, default=10)
     p.add_argument("--num_machines", type=int, default=5)
     p.add_argument("--K", type=int, default=2)
@@ -343,7 +355,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--shared_head", action="store_true")
     p.add_argument("--fixed_width", type=int, default=None)
     p.add_argument("--init_ckpt", type=str, default=None)
-    p.add_argument("--val_path", type=str, default="data/FJSP/TNNLS/SD1/10x5")
+    p.add_argument("--val_path", type=str, default=None)
     p.add_argument("--val_batch_size", type=int, default=100)
     p.add_argument("--val_every", type=int, default=25)
     p.add_argument("--log_every", type=int, default=5)
