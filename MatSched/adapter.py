@@ -99,6 +99,11 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> D
     t_ref_3d = t_ref[..., None]  # (B, 1, 1)
 
     # Bounded relative machine efficiency ratio: mind_head / d_head in (0, 1] (no OOD spikes)
+    # Future contention lookahead: immediate next op (rank == 1) duration on the same machine
+    if K >= 1:
+        d_next = _gather_rows(dur, mr[:, :, 0]) * mid_valid[:, :, 0:1].float()  # (B, J, M)
+    else:
+        d_next = torch.zeros_like(d_head)
     pair_f = torch.stack(
         [
             d_head / scaler_3d,
@@ -106,20 +111,24 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> D
             (start - t_ref_3d) / scaler_3d,
             (start + d_head - t_ref_3d) / scaler_3d,
             (m_at[:, None, :] - o_head[..., None]) / scaler_3d,
+            d_next / scaler_3d,
         ],
         dim=-1,
-    ) * elig[..., None].float()  # (B, J, M, 5)
+    ) * elig[..., None].float()  # (B, J, M, 6)
 
     n_el = (dur > 0).sum(dim=-1).clamp_min(1).float()  # (B, N)
-    fl = ((dur > 0) & (rank >= 1)[..., None]).float() * dur / n_el[..., None]  # (B, N, M)
+    rem_elig = (dur > 0) & (rank >= 1)[..., None]  # (B, N, M)
+    fl = rem_elig.float() * dur / n_el[..., None]  # (B, N, M)
+    fl_bn = (rem_elig & (n_el[..., None] <= 2)).float() * dur / n_el[..., None]  # bottleneck load
     mach_f = torch.stack(
         [
             (m_at - t_ref) / scaler,
             elig.sum(dim=1).float() / float(J),
             fl.sum(dim=1) / (scaler * float(J)),
+            fl_bn.sum(dim=1) / (scaler * float(J)),
         ],
         dim=-1,
-    )  # (B, M, 3)
+    )  # (B, M, 4)
 
     cnt = torch.zeros((B, J), dtype=torch.float32, device=device).scatter_add_(
         1, job, torch.ones((B, N), dtype=torch.float32, device=device)

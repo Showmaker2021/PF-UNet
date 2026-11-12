@@ -154,6 +154,7 @@ def train(args: argparse.Namespace) -> None:
     cfg["kd"]["mode"] = args.kd_mode
     cfg["kd"]["beta1"] = args.beta1
     cfg["kd"]["beta2"] = args.beta2
+    cfg["kd"]["start_iter"] = args.kd_start_iter
     cfg["kd"]["dagger_weight"] = args.dagger_weight
     cfg["kd"]["dagger_episodes"] = args.dagger_episodes
     cfg["kd"]["router_metric"] = args.router_metric
@@ -199,6 +200,7 @@ def train(args: argparse.Namespace) -> None:
 
     for it in range(1, args.iters + 1):
         t0 = time.perf_counter()
+        kd_active = cfg["kd"]["enabled"] and (args.fixed_width is None) and (it >= cfg["kd"]["start_iter"])
 
         # (1) On-policy PPO rollout from pi3 (or fixed_width model)
         buf, mk = rollout_episodes(
@@ -218,7 +220,9 @@ def train(args: argparse.Namespace) -> None:
             for mb in iter_minibatches(buf, cfg["ppo"]["minibatch_size"], shuffle=True, device=device):
                 opt.zero_grad(set_to_none=True)
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
-                    loss, stats = ppo_step_loss(model, mb, cfg, train_level=train_level, kd_cfg=cfg["kd"])
+                    loss, stats = ppo_step_loss(
+                        model, mb, cfg, train_level=train_level, kd_cfg=cfg["kd"] if kd_active else None
+                    )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["ppo"]["grad_clip"])
                 opt.step()
@@ -229,7 +233,7 @@ def train(args: argparse.Namespace) -> None:
 
         # (2) Optional DAgger rollout from router -> gentle KD anchored by dagger_weight
         dagger_kl = 0.0
-        if cfg["kd"]["enabled"] and args.fixed_width is None and cfg["kd"]["dagger_episodes"] > 0:
+        if kd_active and cfg["kd"]["dagger_episodes"] > 0:
             lo, hi = cfg["kd"]["tau_range"]
             tau = (random.uniform(lo, hi), random.uniform(lo, hi))
             metric = cfg["kd"]["router_metric"]
@@ -342,16 +346,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iters", type=int, default=200)
     p.add_argument("--episodes_per_iter", type=int, default=32)
     p.add_argument("--batch_size", type=int, default=32)
-    p.add_argument("--minibatch_size", type=int, default=512)
+    p.add_argument("--minibatch_size", type=int, default=1024)
     p.add_argument("--lr", type=float, default=6e-4)
     p.add_argument("--lr_min", type=float, default=1e-4)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--no_bf16", action="store_true")
     p.add_argument("--enable_kd", action="store_true")
-    p.add_argument("--kd_mode", choices=["kl", "pg", "both"], default="both")
-    p.add_argument("--beta1", type=float, default=0.03)
-    p.add_argument("--beta2", type=float, default=0.03)
+    p.add_argument("--kd_mode", choices=["kl", "pg", "both"], default="kl")
+    p.add_argument("--beta1", type=float, default=0.015)
+    p.add_argument("--beta2", type=float, default=0.02)
+    p.add_argument("--kd_start_iter", type=int, default=100)
     p.add_argument("--dagger_weight", type=float, default=0.10)
     p.add_argument("--dagger_episodes", type=int, default=8)
     p.add_argument("--router_metric", choices=["norm_entropy", "margin", "top1"], default="norm_entropy")

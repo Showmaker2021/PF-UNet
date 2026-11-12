@@ -295,8 +295,8 @@ class MatSchedNet(nn.Module):
         self.fixed_width = fixed_width
 
         self.embed_core = NLinear(4, dmax)
-        self.embed_mach = NLinear(3, dmax)
-        self.embed_pair = NLinear(5, dmax)
+        self.embed_mach = NLinear(4, dmax)
+        self.embed_pair = NLinear(6, dmax)
         if use_mid_out:
             self.embed_mid = NLinear(3, min(dmax, RING_W["mid"]))
             self.deepsets = DeepSetsTail(3, min(dmax, RING_W["out"]))
@@ -362,8 +362,8 @@ class MatSchedNet(nn.Module):
         el_f = elig.unsqueeze(-1).to(dtype)
 
         core = self.embed_core(core_f, 4, d) * cm["core"] * jv_f
-        mach = self.embed_mach(mach_f, 3, d) * cm["core"]
-        pair = self.embed_pair(pair_f, 5, d) * cm["core"] * el_f
+        mach = self.embed_mach(mach_f, 4, d) * cm["core"]
+        pair = self.embed_pair(pair_f, 6, d) * cm["core"] * el_f
 
         if self.use_mid_out:
             d_out = min(d, RING_W["out"])

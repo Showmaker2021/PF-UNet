@@ -114,14 +114,15 @@ DEFAULT_CONFIG = {
         "grad_clip": 1.0,
         "episodes_per_iter": 32,
         "rollout_batch_size": 32,
-        "minibatch_size": 512,
+        "minibatch_size": 1024,
         "use_bf16": True,
     },
     "kd": {
         "enabled": False,
-        "mode": "both",           # 'kl', 'pg', or 'both' (Ablation A6)
-        "beta1": 0.03,
-        "beta2": 0.03,
+        "mode": "kl",             # 'kl', 'pg', or 'both' (Ablation A6)
+        "beta1": 0.015,
+        "beta2": 0.02,
+        "start_iter": 100,
         "dagger_weight": 0.10,
         "dagger_episodes": 8,
         "router_metric": "norm_entropy",
