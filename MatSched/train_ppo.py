@@ -111,6 +111,37 @@ def ppo_step_loss(
     return total, stats
 
 
+def reinforce_step_loss(
+    model: MatSchedNet,
+    mb: Dict[str, object],
+    episodes_in_batch: int,
+    total_transitions: int,
+    train_level: int = 3,
+    kd_cfg: Optional[dict] = None,
+) -> tuple[torch.Tensor, Dict[str, float]]:
+    """Compute REINFORCE loss (matching ReSched REINFORCETrainer) + optional KL distillation."""
+    inp = mb["inp"]
+    elig_flat = inp["elig"].flatten(1)
+    logp_main, _ = model(inp, level=train_level)
+    logp_act = logp_main.gather(1, mb["action"][:, None]).squeeze(1)
+    pg_loss = -(mb["adv"] * logp_act).sum() / float(max(episodes_in_batch, 1))
+    ent = masked_entropy(logp_main, elig_flat)
+    total = pg_loss
+
+    stats = {"pg": float(pg_loss.item()), "vf": 0.0, "ent": float(ent.item()), "kl1": 0.0, "kl2": 0.0}
+    if kd_cfg and kd_cfg.get("enabled", False) and train_level == 3:
+        teacher = logp_main.detach()
+        w_tok = float(mb["action"].shape[0]) / float(max(total_transitions, 1))
+        for lv, beta_key, stat_key in ((1, "beta1", "kl1"), (2, "beta2", "kl2")):
+            beta = kd_cfg[beta_key]
+            if beta > 0:
+                logp_k, _ = model(inp, level=lv)
+                kl_k = masked_kl_div(teacher, logp_k, elig_flat)
+                total = total + (beta * w_tok) * kl_k
+                stats[stat_key] = float(kl_k.item())
+    return total, stats
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -191,9 +222,10 @@ def train(args: argparse.Namespace) -> None:
     best_gap = float("inf")
 
     train_level = 3
+    gamma = args.gamma if args.gamma is not None else (0.99 if args.algo == "reinforce" else 1.0)
     print(
-        f"Training MatSchedNet on {device} | dataset={args.dataset}({args.num_jobs}x{args.num_machines}, pt<={cfg['env']['max_processing_time']}) | "
-        f"val={val_path} | bf16={amp_enabled}, fixed_width={args.fixed_width}, "
+        f"Training MatSchedNet ({args.algo.upper()}) on {device} | dataset={args.dataset}({args.num_jobs}x{args.num_machines}, pt<={cfg['env']['max_processing_time']}) | "
+        f"val={val_path} | bf16={amp_enabled}, fixed_width={args.fixed_width}, gamma={gamma}, "
         f"KD={cfg['kd']['enabled']}[{cfg['kd']['mode']}, b1={cfg['kd']['beta1']}, b2={cfg['kd']['beta2']}], "
         f"iters={args.iters}, lr={args.lr}->{args.lr_min}"
     )
@@ -202,7 +234,7 @@ def train(args: argparse.Namespace) -> None:
         t0 = time.perf_counter()
         kd_active = cfg["kd"]["enabled"] and (args.fixed_width is None) and (it >= cfg["kd"]["start_iter"])
 
-        # (1) On-policy PPO rollout from pi3 (or fixed_width model)
+        # (1) On-policy rollout from pi3 (or fixed_width model)
         buf, mk = rollout_episodes(
             model=model,
             env=env,
@@ -212,24 +244,48 @@ def train(args: argparse.Namespace) -> None:
             K=cfg["model"]["K"],
             device=device,
             use_bf16=cfg["ppo"]["use_bf16"],
+            algo=args.algo,
+            gamma=gamma,
         )
 
         model.train()
         meter = {"pg": 0.0, "vf": 0.0, "ent": 0.0, "kl1": 0.0, "kl2": 0.0, "n": 0}
-        for _ in range(cfg["ppo"]["k_epochs"]):
-            for mb in iter_minibatches(buf, cfg["ppo"]["minibatch_size"], shuffle=True, device=device):
-                opt.zero_grad(set_to_none=True)
+        if args.algo == "reinforce":
+            total_trans = int(buf["action"].shape[0])
+            opt.zero_grad(set_to_none=True)
+            for mb in iter_minibatches(buf, cfg["ppo"]["minibatch_size"], shuffle=False, device=device):
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
-                    loss, stats = ppo_step_loss(
-                        model, mb, cfg, train_level=train_level, kd_cfg=cfg["kd"] if kd_active else None
+                    loss, stats = reinforce_step_loss(
+                        model,
+                        mb,
+                        episodes_in_batch=cfg["ppo"]["episodes_per_iter"],
+                        total_transitions=total_trans,
+                        train_level=train_level,
+                        kd_cfg=cfg["kd"] if kd_active else None,
                     )
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["ppo"]["grad_clip"])
-                opt.step()
-
-                for k in ("pg", "vf", "ent", "kl1", "kl2"):
+                meter["pg"] += stats["pg"]
+                for k in ("ent", "kl1", "kl2"):
                     meter[k] += stats[k]
                 meter["n"] += 1
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["ppo"]["grad_clip"])
+            opt.step()
+            meter["pg"] *= max(meter["n"], 1)  # report total batch pg loss (summed across chunks)
+        else:
+            for _ in range(cfg["ppo"]["k_epochs"]):
+                for mb in iter_minibatches(buf, cfg["ppo"]["minibatch_size"], shuffle=True, device=device):
+                    opt.zero_grad(set_to_none=True)
+                    with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
+                        loss, stats = ppo_step_loss(
+                            model, mb, cfg, train_level=train_level, kd_cfg=cfg["kd"] if kd_active else None
+                        )
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["ppo"]["grad_clip"])
+                    opt.step()
+
+                    for k in ("pg", "vf", "ent", "kl1", "kl2"):
+                        meter[k] += stats[k]
+                    meter["n"] += 1
 
         # (2) Optional DAgger rollout from router -> gentle KD anchored by dagger_weight
         dagger_kl = 0.0
@@ -338,6 +394,8 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=["SD1", "SD2"], default="SD1")
+    p.add_argument("--algo", choices=["ppo", "reinforce"], default="ppo")
+    p.add_argument("--gamma", type=float, default=None)
     p.add_argument("--num_jobs", type=int, default=10)
     p.add_argument("--num_machines", type=int, default=5)
     p.add_argument("--K", type=int, default=2)

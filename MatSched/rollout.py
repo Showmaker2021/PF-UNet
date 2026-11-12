@@ -50,6 +50,8 @@ def rollout_episodes(
     K: int = 2,
     device: Optional[torch.device | str] = None,
     use_bf16: bool = True,
+    algo: str = "ppo",
+    gamma: float = 1.0,
 ) -> Tuple[Dict[str, object], np.ndarray]:
     """Run `num_episodes` generated episodes synchronously and return flattened transition dict."""
     if device is None:
@@ -109,7 +111,11 @@ def rollout_episodes(
 
         rewards_bt = torch.stack(step_rewards, dim=1)  # (bs, T)
         values_bt = torch.stack(step_values, dim=1)    # (bs, T)
-        adv_bt, ret_bt = compute_gae(rewards_bt, values_bt, gamma=1.0, lam=0.98)
+        if algo == "reinforce":
+            ret_bt = compute_discounted_returns(rewards_bt, gamma=gamma)
+            adv_bt = ret_bt - ret_bt.mean(dim=0, keepdim=True)
+        else:
+            adv_bt, ret_bt = compute_gae(rewards_bt, values_bt, gamma=gamma, lam=0.98)
 
         # Flatten (bs, T) -> (bs*T,)
         for t in range(len(step_inps)):
@@ -124,7 +130,8 @@ def rollout_episodes(
 
     merged_inp = _concat_padded_inputs(all_inp_chunks)
     flat_adv = torch.cat(all_advs, dim=0)
-    flat_adv = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
+    if algo != "reinforce":
+        flat_adv = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
 
     buffer = {
         "inp": merged_inp,
@@ -156,6 +163,16 @@ def compute_gae(
 
     returns = advantages + values
     return advantages, returns
+
+
+def compute_discounted_returns(rewards: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
+    """Compute discounted returns on (B, T) tensor (matching ReSched REINFORCETrainer)."""
+    returns = torch.zeros_like(rewards)
+    g = torch.zeros((rewards.shape[0],), dtype=rewards.dtype)
+    for t in reversed(range(rewards.shape[1])):
+        g = rewards[:, t] + gamma * g
+        returns[:, t] = g
+    return returns
 
 
 def _concat_padded_inputs(chunks: List[Dict[str, object]]) -> Dict[str, object]:
