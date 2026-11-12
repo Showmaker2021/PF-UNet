@@ -16,3 +16,4 @@ figures4papers/
 .idea/
 .vscode/
 *.swp
+MatSched/checkpoints/
