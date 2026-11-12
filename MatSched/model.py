@@ -48,6 +48,7 @@ class DeepSetsTail(nn.Module):
         has_tail = torch.zeros((B, num_jobs), dtype=torch.long, device=h.device)
         has_tail.scatter_add_(1, job, mask.long())
         has_tail_mask = (has_tail > 0).unsqueeze(-1).to(h.dtype)
+        mean_pool = sum_pool / has_tail.clamp_min(1).unsqueeze(-1).to(h.dtype)
 
         neg_inf = torch.tensor(-1e9, dtype=h.dtype, device=h.device)
         h_for_max = torch.where(mask.unsqueeze(-1), h, neg_inf)
@@ -55,7 +56,7 @@ class DeepSetsTail(nn.Module):
         max_pool.scatter_reduce_(1, job_exp, h_for_max, reduce="amax", include_self=True)
         max_pool = max_pool * has_tail_mask
 
-        return self.proj_sum(sum_pool, d, d) + self.proj_max(max_pool, d, d)
+        return self.proj_sum(mean_pool, d, d) + self.proj_max(max_pool, d, d)
 
 
 class PairMLP(nn.Module):
@@ -219,12 +220,16 @@ class MatSchedBlock(nn.Module):
         ).squeeze(2) * jv_f
 
         if self.use_m2o:
+            q_m2p = self.norm_mach_m2p(mach, d).unsqueeze(2)
+            kv_m2p = torch.cat([self.norm_pair_m2p(pair, d).transpose(1, 2), q_m2p], dim=2)
+            m_self = torch.ones((el.shape[0], el.shape[2], 1), dtype=torch.bool, device=el.device)
+            m_m2p = torch.cat([el.transpose(1, 2), m_self], dim=-1).unsqueeze(2)
             mach = mach + self.att_m2p(
-                self.norm_mach_m2p(mach, d).unsqueeze(2),
-                self.norm_pair_m2p(pair, d).transpose(1, 2),
-                mask=el.transpose(1, 2).unsqueeze(2),
+                q_m2p,
+                kv_m2p,
+                mask=m_m2p,
                 d=d,
-                null=True,
+                null=False,
             ).squeeze(2)
 
         if self.use_cc:

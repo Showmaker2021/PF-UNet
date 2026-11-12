@@ -60,6 +60,7 @@ def rollout_episodes(
     all_inp_chunks: List[Dict[str, object]] = []
     all_actions: List[torch.Tensor] = []
     all_logps: List[torch.Tensor] = []
+    all_vals: List[torch.Tensor] = []
     all_advs: List[torch.Tensor] = []
     all_rets: List[torch.Tensor] = []
     all_makespans: List[np.ndarray] = []
@@ -115,6 +116,7 @@ def rollout_episodes(
             all_inp_chunks.append(step_inps[t])
             all_actions.append(step_actions[t])
             all_logps.append(step_logps[t])
+            all_vals.append(values_bt[:, t])
             all_advs.append(adv_bt[:, t])
             all_rets.append(ret_bt[:, t])
 
@@ -128,6 +130,7 @@ def rollout_episodes(
         "inp": merged_inp,
         "action": torch.cat(all_actions, dim=0),
         "old_logp": torch.cat(all_logps, dim=0),
+        "old_val": torch.cat(all_vals, dim=0),
         "adv": flat_adv,
         "ret": torch.cat(all_rets, dim=0),
     }
@@ -185,6 +188,7 @@ def iter_minibatches(
             "inp": inp_mb,
             "action": buffer["action"][idx].to(device) if device else buffer["action"][idx],
             "old_logp": buffer["old_logp"][idx].to(device) if device else buffer["old_logp"][idx],
+            "old_val": buffer["old_val"][idx].to(device) if device else buffer["old_val"][idx],
             "adv": buffer["adv"][idx].to(device) if device else buffer["adv"][idx],
             "ret": buffer["ret"][idx].to(device) if device else buffer["ret"][idx],
         }

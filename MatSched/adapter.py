@@ -87,19 +87,22 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> D
     o_head = _gather_rows(o_at, hr) * jv_f  # (B, J)
     mind_head = _gather_rows(mind, hr) * jv_f  # (B, J)
 
-    # Single reference horizon over active head operations and all machines
+    # Single reference horizon over active head operations and active machines (matching ReSched)
     active_o = torch.where(jvalid, o_head, inf_val).amin(dim=1, keepdim=True)
-    t_ref = torch.minimum(active_o, m_at.amin(dim=1, keepdim=True))  # (B, 1)
+    active_mach = (dur > 0).any(dim=1)  # (B, M)
+    active_m = torch.where(active_mach, m_at, inf_val).amin(dim=1, keepdim=True)
+    t_ref = torch.minimum(active_o, active_m)  # (B, 1)
+    t_ref = torch.where(torch.isfinite(t_ref), t_ref, torch.zeros_like(t_ref))
 
     start = torch.maximum(m_at[:, None, :], o_head[..., None])  # (B, J, M)
     scaler_3d = scaler[..., None]  # (B, 1, 1)
     t_ref_3d = t_ref[..., None]  # (B, 1, 1)
 
-    # Note: d_head / mind_head is already dimensionless (scale-invariant); do NOT divide by scaler
+    # Bounded relative machine efficiency ratio: mind_head / d_head in (0, 1] (no OOD spikes)
     pair_f = torch.stack(
         [
             d_head / scaler_3d,
-            d_head / mind_head.clamp_min(1e-6)[..., None],
+            mind_head[..., None] / d_head.clamp_min(1e-6),
             (start - t_ref_3d) / scaler_3d,
             (start + d_head - t_ref_3d) / scaler_3d,
             (m_at[:, None, :] - o_head[..., None]) / scaler_3d,
@@ -113,7 +116,7 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> D
         [
             (m_at - t_ref) / scaler,
             elig.sum(dim=1).float() / float(J),
-            fl.sum(dim=1) / scaler,
+            fl.sum(dim=1) / (scaler * float(J)),
         ],
         dim=-1,
     )  # (B, M, 3)
@@ -130,7 +133,7 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> D
                 (o_head - t_ref) / scaler,
                 mind_head / scaler,
                 cnt / max_cnt,
-                work / scaler,
+                torch.log1p(work / scaler),
             ],
             dim=-1,
         )

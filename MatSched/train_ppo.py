@@ -73,7 +73,14 @@ def ppo_step_loss(
 
     logp_main, value = model(inp, level=train_level)
     pg_loss = _ppo_pg_loss(logp_main, action, old_logp, adv, ppo_cfg["clip_range"])
-    vf_loss = F.mse_loss(value.float(), ret)
+    v_pred = value.float()
+    if "old_val" in mb:
+        clip_r = ppo_cfg["clip_range"]
+        v_old = mb["old_val"]
+        v_clip = v_old + (v_pred - v_old).clamp(-clip_r, clip_r)
+        vf_loss = torch.max((v_pred - ret).pow(2), (v_clip - ret).pow(2)).mean()
+    else:
+        vf_loss = F.mse_loss(v_pred, ret)
     ent = masked_entropy(logp_main, elig_flat)
     total = pg_loss + ppo_cfg["vf_coef"] * vf_loss - ppo_cfg["entropy_coef"] * ent
 
@@ -252,7 +259,8 @@ def train(args: argparse.Namespace) -> None:
                     with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
                         teacher, _ = model(inp, level=3)
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
-                    kd_loss = torch.tensor(0.0, device=device)
+                    logp3_cur, _ = model(inp, level=3)
+                    kd_loss = masked_kl_div(teacher, logp3_cur, elig_flat)
                     for lv, beta in ((1, cfg["kd"]["beta1"]), (2, cfg["kd"]["beta2"])):
                         if beta > 0:
                             logp_k, _ = model(inp, level=lv)
@@ -334,18 +342,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iters", type=int, default=200)
     p.add_argument("--episodes_per_iter", type=int, default=32)
     p.add_argument("--batch_size", type=int, default=32)
-    p.add_argument("--minibatch_size", type=int, default=256)
+    p.add_argument("--minibatch_size", type=int, default=512)
     p.add_argument("--lr", type=float, default=6e-4)
     p.add_argument("--lr_min", type=float, default=1e-4)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--no_bf16", action="store_true")
     p.add_argument("--enable_kd", action="store_true")
-    p.add_argument("--kd_mode", choices=["kl", "pg", "both"], default="kl")
-    p.add_argument("--beta1", type=float, default=0.1)
-    p.add_argument("--beta2", type=float, default=0.1)
-    p.add_argument("--dagger_weight", type=float, default=0.25)
-    p.add_argument("--dagger_episodes", type=int, default=16)
+    p.add_argument("--kd_mode", choices=["kl", "pg", "both"], default="both")
+    p.add_argument("--beta1", type=float, default=0.03)
+    p.add_argument("--beta2", type=float, default=0.03)
+    p.add_argument("--dagger_weight", type=float, default=0.10)
+    p.add_argument("--dagger_episodes", type=int, default=8)
     p.add_argument("--router_metric", choices=["norm_entropy", "margin", "top1"], default="norm_entropy")
     p.add_argument("--no_m2o", action="store_true")
     p.add_argument("--no_mid_out", action="store_true")
