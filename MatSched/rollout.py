@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
-from adapter import build_inputs, move_inputs_to, select_rows, to_env_action
+from adapter import build_inputs, collate_inputs, move_inputs_to, select_rows, to_env_action
 
 
 def sample_level_policy(model, inp: Dict[str, object], level: int = 3, greedy: bool = False):
@@ -176,15 +176,8 @@ def compute_discounted_returns(rewards: torch.Tensor, gamma: float = 0.99) -> to
 
 
 def _concat_padded_inputs(chunks: List[Dict[str, object]]) -> Dict[str, object]:
-    """Concatenate list of padded input dicts along batch dim 0."""
-    keys_fixed = ("core_f", "mach_f", "pair_f", "mid_f", "mid_valid", "elig", "jvalid", "head_row", "scaler")
-    out: Dict[str, object] = {k: torch.cat([c[k] for c in chunks], dim=0) for k in keys_fixed}
-    out["tail"] = {
-        "feat": torch.cat([c["tail"]["feat"] for c in chunks], dim=0),
-        "mask": torch.cat([c["tail"]["mask"] for c in chunks], dim=0),
-        "job": torch.cat([c["tail"]["job"] for c in chunks], dim=0),
-    }
-    return out
+    """Concatenate list of padded input dicts along batch dim 0 using collate_inputs."""
+    return collate_inputs(chunks)
 
 
 def iter_minibatches(
