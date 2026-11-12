@@ -361,11 +361,13 @@ def train(args: argparse.Namespace) -> None:
                         device=device,
                     )
                 g1, g2, g3 = [val_res[lv]["gap"] for lv in (1, 2, 3)]
-                print(
-                    f"  [VAL @ iter {it}] gap L1={g1:.2f}% L2={g2:.2f}% L3={g3:.2f}% | "
-                    f"mk3={val_res[3]['makespan']:.3f}"
-                )
-                score_metric = g3 if g3 is not None else val_res[3]["makespan"]
+                m1, m2, m3 = [val_res[lv]["makespan"] for lv in (1, 2, 3)]
+                if g3 is not None:
+                    print(f"  [VAL @ iter {it}] gap L1={g1:.2f}% L2={g2:.2f}% L3={g3:.2f}% | mk3={m3:.3f}")
+                    score_metric = g3
+                else:
+                    print(f"  [VAL @ iter {it}] mk L1={m1:.3f} L2={m2:.3f} L3={m3:.3f}")
+                    score_metric = m3
             else:
                 res = evaluate_matsched(
                     model=model,
