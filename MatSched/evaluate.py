@@ -21,8 +21,10 @@ from configs.matsched_fjsp import (
     ensure_ppo_on_path,
     load_fjsp_dataset_and_baseline,
     load_jssp_dataset_and_baseline,
+    load_ffsp_dataset_and_baseline,
     make_fjsp_env,
     make_jssp_env,
+    make_ffsp_env,
 )
 from model import MatSchedNet
 from router import act_adaptive
@@ -220,7 +222,7 @@ def evaluate_resched_baseline(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--problem", choices=["fjsp", "jssp"], default="fjsp")
+    p.add_argument("--problem", choices=["fjsp", "jssp", "ffsp"], default="fjsp")
     p.add_argument("--mode", choices=["resched_m0", "matsched", "pareto"], default="resched_m0")
     p.add_argument("--ckpt", type=str, default="ckpt/PPO/SD1-10x05.pth")
     p.add_argument("--datasets", nargs="+", default=["data/FJSP/TNNLS/SD1/10x5", "data/FJSP/TNNLS/SD1/15x10"])
@@ -245,17 +247,26 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = MatSchedNet(**cfg_m).to(device)
         model.load_state_dict(ckpt["model"])
-        env = make_jssp_env() if args.problem == "jssp" else make_fjsp_env()
+        if args.problem == "jssp":
+            env = make_jssp_env()
+        elif args.problem == "ffsp":
+            env = make_ffsp_env()
+        else:
+            env = make_fjsp_env()
+
         for dpath in args.datasets:
             if args.problem == "jssp":
                 ds, bl = load_jssp_dataset_and_baseline(dpath)
+            elif args.problem == "ffsp":
+                ds, bl = load_ffsp_dataset_and_baseline(dpath, instance_num=1000)
             else:
                 ds, bl = load_fjsp_dataset_and_baseline(dpath)
             if args.mode == "matsched":
                 r = evaluate_matsched(
                     model, env, ds, bl, batch_size=args.batch_size, level=args.level, device=device, measure_flops=args.flops
                 )
-                print(f"{dpath} [L{args.level}] | mk={r['makespan']:.3f} | gap={r['gap']:.3f}% | ms/inst={r['sec_per_inst']*1000:.3f}")
+                gap_s = f"{r['gap']:.3f}%" if r["gap"] is not None else "N/A"
+                print(f"{dpath} [L{args.level}] | mk={r['makespan']:.3f} | gap={gap_s} | ms/inst={r['sec_per_inst']*1000:.3f}")
             else:
                 grid = (
                     [(0.15, 0.25), (0.30, 0.40), (0.45, 0.55), (0.60, 0.70), (0.75, 0.85)]

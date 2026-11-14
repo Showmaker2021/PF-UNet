@@ -21,8 +21,10 @@ from configs.matsched_fjsp import (
     DEFAULT_CONFIG,
     load_fjsp_dataset_and_baseline,
     load_jssp_dataset_and_baseline,
+    load_ffsp_dataset_and_baseline,
     make_fjsp_env,
     make_jssp_env,
+    make_ffsp_env,
 )
 from evaluate import evaluate_matsched
 from model import MatSchedNet
@@ -201,6 +203,9 @@ def train(args: argparse.Namespace) -> None:
     if args.problem == "jssp":
         env = make_jssp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, min_processing_time=1, max_processing_time=99)
         env_val = make_jssp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, min_processing_time=1, max_processing_time=99)
+    elif args.problem == "ffsp":
+        env = make_ffsp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, num_stages=3, min_processing_time=2, max_processing_time=9)
+        env_val = make_ffsp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, num_stages=3, min_processing_time=2, max_processing_time=9)
     else:
         env = make_fjsp_env(**cfg["env"])
         env_val = make_fjsp_env(**cfg["env"])
@@ -220,6 +225,8 @@ def train(args: argparse.Namespace) -> None:
     if val_path is None:
         if args.problem == "jssp":
             val_path = f"data/JSSP/L2D/Vali/generatedData{args.num_jobs}_{args.num_machines}_Seed200.npy"
+        elif args.problem == "ffsp":
+            val_path = f"data/FFSP/Matnet/unrelated_10000_problems_444_job{args.num_jobs}_2_10.pt"
         else:
             val_path = (
                 f"data/FJSP/TNNLS/SD1/{args.num_jobs}x{args.num_machines}"
@@ -230,6 +237,8 @@ def train(args: argparse.Namespace) -> None:
     if val_path:
         if args.problem == "jssp":
             val_data, val_ref = load_jssp_dataset_and_baseline(val_path)
+        elif args.problem == "ffsp":
+            val_data, val_ref = load_ffsp_dataset_and_baseline(val_path, instance_num=100)
         else:
             val_data, val_ref = load_fjsp_dataset_and_baseline(val_path)
 
@@ -411,7 +420,7 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--problem", choices=["fjsp", "jssp"], default="fjsp")
+    p.add_argument("--problem", choices=["fjsp", "jssp", "ffsp"], default="fjsp")
     p.add_argument("--dataset", choices=["SD1", "SD2"], default="SD1")
     p.add_argument("--algo", choices=["ppo", "reinforce"], default="ppo")
     p.add_argument("--gamma", type=float, default=None)

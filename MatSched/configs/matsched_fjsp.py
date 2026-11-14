@@ -56,6 +56,45 @@ def make_jssp_env(num_jobs: int = 10, num_machines: int = 10, min_processing_tim
     return JSSPEnv(generator_params=gen_params)
 
 
+def make_ffsp_env(num_jobs: int = 20, num_machines: int = 12, num_stages: int = 3, min_processing_time: int = 2, max_processing_time: int = 9):
+    """Instantiate FFSPEnv without importing SchedulingModel."""
+    ensure_ppo_on_path()
+    from SchedulingEnvironment import FFSPEnv
+
+    gen_params = {
+        "num_jobs": num_jobs,
+        "num_machines": num_machines,
+        "num_stages": num_stages,
+        "min_processing_time": min_processing_time,
+        "max_processing_time": max_processing_time,
+        "resource_flexibility": True,
+        "machine_cnt_list": [4, 4, 4],
+        "machine_flexibility": False,
+    }
+    return FFSPEnv(generator_params=gen_params)
+
+
+def _load_reinforce_ffsp_module():
+    """Load REINFORCE/configs/ffsp.py safely."""
+    rf_ffsp_path = REPO_ROOT / "REINFORCE" / "configs" / "ffsp.py"
+    spec = importlib.util.spec_from_file_location("_rf_configs_ffsp", str(rf_ffsp_path))
+    mod = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_ffsp_dataset_and_baseline(rel_data_path: str, instance_num: int = 1000) -> tuple[Any, Any]:
+    """Load FFSP test dataset (.pt from Matnet) using REINFORCE/configs/ffsp.py loader."""
+    rf_ffsp = _load_reinforce_ffsp_module()
+    load_data_from_Matnet_files = rf_ffsp.load_data_from_Matnet_files
+
+    abs_path = (REPO_ROOT / rel_data_path).resolve() if not os.path.isabs(rel_data_path) else Path(rel_data_path)
+    dataset = load_data_from_Matnet_files(str(abs_path), instance_num=instance_num)
+    # Matnet test instances do not have pre-stored optimal baseline (reported makespan directly)
+    return dataset, None
+
+
 def _load_reinforce_jssp_module():
     """Load REINFORCE/configs/jssp.py safely."""
     rf_jssp_path = REPO_ROOT / "REINFORCE" / "configs" / "jssp.py"
