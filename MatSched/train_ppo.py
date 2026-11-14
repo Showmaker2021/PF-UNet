@@ -17,7 +17,13 @@ MATSCHED_DIR = Path(__file__).resolve().parent
 if str(MATSCHED_DIR) not in sys.path:
     sys.path.insert(0, str(MATSCHED_DIR))
 
-from configs.matsched_fjsp import DEFAULT_CONFIG, load_fjsp_dataset_and_baseline, make_fjsp_env
+from configs.matsched_fjsp import (
+    DEFAULT_CONFIG,
+    load_fjsp_dataset_and_baseline,
+    load_jssp_dataset_and_baseline,
+    make_fjsp_env,
+    make_jssp_env,
+)
 from evaluate import evaluate_matsched
 from model import MatSchedNet
 from rollout import iter_minibatches, rollout_episodes, sample_level_policy
@@ -192,8 +198,12 @@ def train(args: argparse.Namespace) -> None:
     if args.router_metric == "margin":
         cfg["kd"]["tau_range"] = (0.02, 0.25)
 
-    env = make_fjsp_env(**cfg["env"])
-    env_val = make_fjsp_env(**cfg["env"])
+    if args.problem == "jssp":
+        env = make_jssp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, min_processing_time=1, max_processing_time=99)
+        env_val = make_jssp_env(num_jobs=args.num_jobs, num_machines=args.num_machines, min_processing_time=1, max_processing_time=99)
+    else:
+        env = make_fjsp_env(**cfg["env"])
+        env_val = make_fjsp_env(**cfg["env"])
     model = MatSchedNet(**cfg["model"]).to(device)
     if args.init_ckpt:
         ckpt = torch.load(args.init_ckpt, map_location=device)
@@ -208,14 +218,20 @@ def train(args: argparse.Namespace) -> None:
 
     val_path = args.val_path
     if val_path is None:
-        val_path = (
-            f"data/FJSP/TNNLS/SD1/{args.num_jobs}x{args.num_machines}"
-            if is_sd1
-            else f"data/FJSP/TNNLS/SD2/{args.num_jobs}x{args.num_machines}+mix"
-        )
+        if args.problem == "jssp":
+            val_path = f"data/JSSP/L2D/Vali/generatedData{args.num_jobs}_{args.num_machines}_Seed200.npy"
+        else:
+            val_path = (
+                f"data/FJSP/TNNLS/SD1/{args.num_jobs}x{args.num_machines}"
+                if is_sd1
+                else f"data/FJSP/TNNLS/SD2/{args.num_jobs}x{args.num_machines}+mix"
+            )
     val_data, val_ref = None, None
     if val_path:
-        val_data, val_ref = load_fjsp_dataset_and_baseline(val_path)
+        if args.problem == "jssp":
+            val_data, val_ref = load_jssp_dataset_and_baseline(val_path)
+        else:
+            val_data, val_ref = load_fjsp_dataset_and_baseline(val_path)
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -395,6 +411,7 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
+    p.add_argument("--problem", choices=["fjsp", "jssp"], default="fjsp")
     p.add_argument("--dataset", choices=["SD1", "SD2"], default="SD1")
     p.add_argument("--algo", choices=["ppo", "reinforce"], default="ppo")
     p.add_argument("--gamma", type=float, default=None)

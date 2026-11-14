@@ -42,6 +42,45 @@ def make_fjsp_env(num_jobs: int = 10, num_machines: int = 5, sd1: bool = True, m
     return FJSPEnv(generator_params=gen_params, sd1=sd1)
 
 
+def make_jssp_env(num_jobs: int = 10, num_machines: int = 10, min_processing_time: int = 1, max_processing_time: int = 99):
+    """Instantiate JSSPEnv without importing SchedulingModel."""
+    ensure_ppo_on_path()
+    from SchedulingEnvironment import JSSPEnv
+
+    gen_params = {
+        "num_jobs": num_jobs,
+        "num_machines": num_machines,
+        "min_processing_time": min_processing_time,
+        "max_processing_time": max_processing_time,
+    }
+    return JSSPEnv(generator_params=gen_params)
+
+
+def _load_reinforce_jssp_module():
+    """Load REINFORCE/configs/jssp.py safely."""
+    rf_jssp_path = REPO_ROOT / "REINFORCE" / "configs" / "jssp.py"
+    spec = importlib.util.spec_from_file_location("_rf_configs_jssp", str(rf_jssp_path))
+    mod = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_jssp_dataset_and_baseline(rel_data_path: str) -> tuple[Any, Any]:
+    """Load JSSP dataset (npy) and UB baseline using REINFORCE/configs/jssp.py loaders."""
+    rf_jssp = _load_reinforce_jssp_module()
+    load_data_from_L2D = rf_jssp.load_data_from_L2D
+    load_benchmark_solution_for_JSSP = rf_jssp.load_benchmark_solution_for_JSSP
+
+    abs_path = (REPO_ROOT / rel_data_path).resolve() if not os.path.isabs(rel_data_path) else Path(rel_data_path)
+    dataset = load_data_from_L2D(str(abs_path))
+
+    # Identify benchmark name (e.g., tai15x15, dmu20x15)
+    stem = abs_path.stem
+    baseline = load_benchmark_solution_for_JSSP(stem)
+    return dataset, baseline
+
+
 def load_fjsp_dataset_and_baseline(rel_data_path: str) -> tuple[Any, Any]:
     """Load dataset and OR/UB baseline using PPO/configs/fjsp.py loaders.
 

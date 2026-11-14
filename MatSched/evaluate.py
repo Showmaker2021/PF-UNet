@@ -16,7 +16,14 @@ if str(MATSCHED_DIR) not in sys.path:
     sys.path.insert(0, str(MATSCHED_DIR))
 
 from adapter import build_inputs, to_env_action
-from configs.matsched_fjsp import REPO_ROOT, ensure_ppo_on_path, load_fjsp_dataset_and_baseline, make_fjsp_env
+from configs.matsched_fjsp import (
+    REPO_ROOT,
+    ensure_ppo_on_path,
+    load_fjsp_dataset_and_baseline,
+    load_jssp_dataset_and_baseline,
+    make_fjsp_env,
+    make_jssp_env,
+)
 from model import MatSchedNet
 from router import act_adaptive
 
@@ -213,6 +220,7 @@ def evaluate_resched_baseline(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+    p.add_argument("--problem", choices=["fjsp", "jssp"], default="fjsp")
     p.add_argument("--mode", choices=["resched_m0", "matsched", "pareto"], default="resched_m0")
     p.add_argument("--ckpt", type=str, default="ckpt/PPO/SD1-10x05.pth")
     p.add_argument("--datasets", nargs="+", default=["data/FJSP/TNNLS/SD1/10x5", "data/FJSP/TNNLS/SD1/15x10"])
@@ -237,9 +245,12 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = MatSchedNet(**cfg_m).to(device)
         model.load_state_dict(ckpt["model"])
-        env = make_fjsp_env()
+        env = make_jssp_env() if args.problem == "jssp" else make_fjsp_env()
         for dpath in args.datasets:
-            ds, bl = load_fjsp_dataset_and_baseline(dpath)
+            if args.problem == "jssp":
+                ds, bl = load_jssp_dataset_and_baseline(dpath)
+            else:
+                ds, bl = load_fjsp_dataset_and_baseline(dpath)
             if args.mode == "matsched":
                 r = evaluate_matsched(
                     model, env, ds, bl, batch_size=args.batch_size, level=args.level, device=device, measure_flops=args.flops
