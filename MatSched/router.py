@@ -114,7 +114,8 @@ def act_adaptive(
     """Build inputs from `env` and execute adaptive early-exit routing."""
     if device is None:
         device = next(model.parameters()).device
-    inp = build_inputs(env, K=K, device=device)
+    is_jssp = (getattr(getattr(env, "generator", None), "__class__", None).__name__ == "JobSchedulingProblemGenerator")
+    inp = build_inputs(env, K=K, device=device, is_jssp=is_jssp)
     chosen, _, level_used = act_adaptive_from_inputs(model, inp, tau=tau, greedy=greedy, metric=metric)
     M = inp["elig"].shape[2]
     sel_job = chosen // M

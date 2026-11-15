@@ -82,6 +82,7 @@ def evaluate_matsched(
                 flop_ctx.__enter__()
 
             done = False
+            is_jssp = (env.generator.__class__.__name__ == "JobSchedulingProblemGenerator")
             while not done:
                 if tau is not None:
                     action, lv_used = act_adaptive(
@@ -90,7 +91,7 @@ def evaluate_matsched(
                     for lv in (1, 2, 3):
                         level_counts[lv] += int((lv_used == lv).sum().item())
                 else:
-                    inp = build_inputs(env, K=K, device=device)
+                    inp = build_inputs(env, K=K, device=device, is_jssp=is_jssp)
                     logp, _ = model(inp, level=level)
                     p = logp.exp()
                     pick = p.argmax(dim=-1) if greedy else torch.distributions.Categorical(probs=p).sample()
