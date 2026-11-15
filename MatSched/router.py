@@ -110,14 +110,11 @@ def act_adaptive(
     K: int = 2,
     metric: str = "norm_entropy",
     device: Optional[torch.device | str] = None,
-    is_jssp: Optional[bool] = None,
 ) -> Tuple[Tuple[np.ndarray, np.ndarray], torch.Tensor]:
     """Build inputs from `env` and execute adaptive early-exit routing."""
     if device is None:
         device = next(model.parameters()).device
-    if is_jssp is None:
-        is_jssp = (getattr(getattr(env, "generator", None), "__class__", None).__name__ == "JobSchedulingProblemGenerator")
-    inp = build_inputs(env, K=K, device=device, is_jssp=is_jssp)
+    inp = build_inputs(env, K=K, device=device)
     chosen, _, level_used = act_adaptive_from_inputs(model, inp, tau=tau, greedy=greedy, metric=metric)
     M = inp["elig"].shape[2]
     sel_job = chosen // M

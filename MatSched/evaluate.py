@@ -44,7 +44,6 @@ def evaluate_matsched(
     metric: str = "norm_entropy",
     device: Optional[torch.device | str] = None,
     measure_flops: bool = False,
-    legacy_adapter: bool = False,
 ) -> Dict[str, object]:
     """Evaluate MatSchedNet at fixed `level` or adaptive router (`tau != None`)."""
     if device is None:
@@ -83,16 +82,15 @@ def evaluate_matsched(
                 flop_ctx.__enter__()
 
             done = False
-            is_jssp = (not legacy_adapter) and (env.generator.__class__.__name__ == "JobSchedulingProblemGenerator")
             while not done:
                 if tau is not None:
                     action, lv_used = act_adaptive(
-                        model, env, tau=tau, greedy=greedy, K=K, metric=metric, device=device, is_jssp=is_jssp
+                        model, env, tau=tau, greedy=greedy, K=K, metric=metric, device=device
                     )
                     for lv in (1, 2, 3):
                         level_counts[lv] += int((lv_used == lv).sum().item())
                 else:
-                    inp = build_inputs(env, K=K, device=device, is_jssp=is_jssp)
+                    inp = build_inputs(env, K=K, device=device)
                     logp, _ = model(inp, level=level)
                     p = logp.exp()
                     pick = p.argmax(dim=-1) if greedy else torch.distributions.Categorical(probs=p).sample()
@@ -232,7 +230,6 @@ if __name__ == "__main__":
     p.add_argument("--level", type=int, default=3)
     p.add_argument("--router_metric", choices=["norm_entropy", "margin", "top1"], default="norm_entropy")
     p.add_argument("--flops", action="store_true")
-    p.add_argument("--legacy_adapter", action="store_true", help="Use legacy adapter without problem-specific features")
     args = p.parse_args()
 
     if args.mode == "resched_m0":
@@ -266,15 +263,7 @@ if __name__ == "__main__":
                 ds, bl = load_fjsp_dataset_and_baseline(dpath)
             if args.mode == "matsched":
                 r = evaluate_matsched(
-                    model,
-                    env,
-                    ds,
-                    bl,
-                    batch_size=args.batch_size,
-                    level=args.level,
-                    device=device,
-                    measure_flops=args.flops,
-                    legacy_adapter=args.legacy_adapter,
+                    model, env, ds, bl, batch_size=args.batch_size, level=args.level, device=device, measure_flops=args.flops
                 )
                 gap_s = f"{r['gap']:.3f}%" if r["gap"] is not None else "N/A"
                 print(f"{dpath} [L{args.level}] | mk={r['makespan']:.3f} | gap={gap_s} | ms/inst={r['sec_per_inst']*1000:.3f}")
@@ -286,14 +275,6 @@ if __name__ == "__main__":
                 )
                 for t1, t2 in grid:
                     r = evaluate_matsched(
-                        model,
-                        env,
-                        ds,
-                        bl,
-                        batch_size=args.batch_size,
-                        tau=(t1, t2),
-                        metric=args.router_metric,
-                        device=device,
-                        legacy_adapter=args.legacy_adapter,
+                        model, env, ds, bl, batch_size=args.batch_size, tau=(t1, t2), metric=args.router_metric, device=device
                     )
                     print(f"{dpath} [{args.router_metric}] tau=({t1},{t2}) | gap={r['gap']:.3f}% | ms/inst={r['sec_per_inst']*1000:.3f} | lv={r['level_frac']}")

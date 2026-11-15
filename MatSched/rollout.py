@@ -82,10 +82,9 @@ def rollout_episodes(
         step_values: List[torch.Tensor] = []
         step_rewards: List[torch.Tensor] = []
 
-        is_jssp = (env.generator.__class__.__name__ == "JobSchedulingProblemGenerator")
         done = False
         while not done:
-            inp_gpu = build_inputs(env, K=K, device=device, is_jssp=is_jssp)
+            inp_gpu = build_inputs(env, K=K, device=device)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
                 act_flat, logp, value = policy_fn(inp_gpu)
 

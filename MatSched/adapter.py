@@ -20,7 +20,7 @@ def _gather_rows(x: torch.Tensor, row_idx: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def build_inputs(env, K: int = 2, device: torch.device | str | None = None, is_jssp: bool = False) -> Dict[str, object]:
+def build_inputs(env, K: int = 2, device: torch.device | str | None = None) -> Dict[str, object]:
     """Convert env.state into hierarchical tensors for MatSchedNet.
 
     Verified against PPO/SchedulingEnvironment.py:
@@ -100,79 +100,35 @@ def build_inputs(env, K: int = 2, device: torch.device | str | None = None, is_j
 
     # Bounded relative machine efficiency ratio: mind_head / d_head in (0, 1] (no OOD spikes)
     # Future contention lookahead: immediate next op (rank == 1) duration on the same machine
-    if is_jssp:
-        # Specialized JSSP representation: single-machine per op, look ahead to next machine
-        if K >= 1:
-            d_next_mat = _gather_rows(dur, mr[:, :, 0]) * mid_valid[:, :, 0:1].float()  # (B, J, M)
-            d_next_val = d_next_mat.amax(dim=-1, keepdim=True)  # (B, J, 1) duration of next op
-            next_m_idx = d_next_mat.argmax(dim=-1)  # (B, J) machine of next op
-            next_m_avail = m_at.gather(1, next_m_idx)[:, :, None]  # (B, J, 1) availability of next machine
-            next_m_delay = ((next_m_avail - t_ref_3d) / scaler_3d) * mid_valid[:, :, 0:1].float()
-        else:
-            d_next_val = torch.zeros_like(d_head[..., 0:1])
-            next_m_delay = torch.zeros_like(d_head[..., 0:1])
-
-        pair_f = torch.stack(
-            [
-                d_head / scaler_3d,
-                next_m_delay.expand_as(d_head),
-                (start - t_ref_3d) / scaler_3d,
-                (start + d_head - t_ref_3d) / scaler_3d,
-                (m_at[:, None, :] - o_head[..., None]) / scaler_3d,
-                d_next_val.expand_as(d_head) / scaler_3d,
-            ],
-            dim=-1,
-        ) * elig[..., None].float()  # (B, J, M, 6)
-
-        n_el = (dur > 0).sum(dim=-1).clamp_min(1).float()  # (B, N)
-        rem_elig = (dur > 0) & (rank >= 1)[..., None]  # (B, N, M)
-        fl = rem_elig.float() * dur / n_el[..., None]  # (B, N, M)
-        # For JSSP, calculate immediate next-op pressure on each machine
-        next_press = torch.zeros((B, M), dtype=torch.float32, device=device)
-        if K >= 1:
-            next_m_flat = (next_m_idx * mid_valid[:, :, 0]).view(B, J)
-            next_press.scatter_add_(1, next_m_flat, mid_valid[:, :, 0].float())
-
-        mach_f = torch.stack(
-            [
-                (m_at - t_ref) / scaler,
-                elig.sum(dim=1).float() / float(J),
-                fl.sum(dim=1) / (scaler * float(J)),
-                next_press / float(J),
-            ],
-            dim=-1,
-        )  # (B, M, 4)
+    if K >= 1:
+        d_next = _gather_rows(dur, mr[:, :, 0]) * mid_valid[:, :, 0:1].float()  # (B, J, M)
     else:
-        # Standard FJSP / FFSP representation (Original verified implementation)
-        if K >= 1:
-            d_next = _gather_rows(dur, mr[:, :, 0]) * mid_valid[:, :, 0:1].float()  # (B, J, M)
-        else:
-            d_next = torch.zeros_like(d_head)
-        pair_f = torch.stack(
-            [
-                d_head / scaler_3d,
-                mind_head[..., None] / d_head.clamp_min(1e-6),
-                (start - t_ref_3d) / scaler_3d,
-                (start + d_head - t_ref_3d) / scaler_3d,
-                (m_at[:, None, :] - o_head[..., None]) / scaler_3d,
-                d_next / scaler_3d,
-            ],
-            dim=-1,
-        ) * elig[..., None].float()  # (B, J, M, 6)
+        d_next = torch.zeros_like(d_head)
+    pair_f = torch.stack(
+        [
+            d_head / scaler_3d,
+            mind_head[..., None] / d_head.clamp_min(1e-6),
+            (start - t_ref_3d) / scaler_3d,
+            (start + d_head - t_ref_3d) / scaler_3d,
+            (m_at[:, None, :] - o_head[..., None]) / scaler_3d,
+            d_next / scaler_3d,
+        ],
+        dim=-1,
+    ) * elig[..., None].float()  # (B, J, M, 6)
 
-        n_el = (dur > 0).sum(dim=-1).clamp_min(1).float()  # (B, N)
-        rem_elig = (dur > 0) & (rank >= 1)[..., None]  # (B, N, M)
-        fl = rem_elig.float() * dur / n_el[..., None]  # (B, N, M)
-        fl_bn = (rem_elig & (n_el[..., None] <= 2)).float() * dur / n_el[..., None]  # bottleneck load
-        mach_f = torch.stack(
-            [
-                (m_at - t_ref) / scaler,
-                elig.sum(dim=1).float() / float(J),
-                fl.sum(dim=1) / (scaler * float(J)),
-                fl_bn.sum(dim=1) / (scaler * float(J)),
-            ],
-            dim=-1,
-        )  # (B, M, 4)
+    n_el = (dur > 0).sum(dim=-1).clamp_min(1).float()  # (B, N)
+    rem_elig = (dur > 0) & (rank >= 1)[..., None]  # (B, N, M)
+    fl = rem_elig.float() * dur / n_el[..., None]  # (B, N, M)
+    fl_bn = (rem_elig & (n_el[..., None] <= 2)).float() * dur / n_el[..., None]  # bottleneck load
+    mach_f = torch.stack(
+        [
+            (m_at - t_ref) / scaler,
+            elig.sum(dim=1).float() / float(J),
+            fl.sum(dim=1) / (scaler * float(J)),
+            fl_bn.sum(dim=1) / (scaler * float(J)),
+        ],
+        dim=-1,
+    )  # (B, M, 4)
 
     cnt = torch.zeros((B, J), dtype=torch.float32, device=device).scatter_add_(
         1, job, torch.ones((B, N), dtype=torch.float32, device=device)
