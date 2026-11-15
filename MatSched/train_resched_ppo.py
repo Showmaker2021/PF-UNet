@@ -50,6 +50,7 @@ def main():
 
         if args.problem == "jssp":
             runner_params["test"]["dataset_path"] = [
+                # 8 Taillard benchmarks
                 "../data/JSSP/L2D/BenchDataNmpy/tai15x15.npy",
                 "../data/JSSP/L2D/BenchDataNmpy/tai20x15.npy",
                 "../data/JSSP/L2D/BenchDataNmpy/tai20x20.npy",
@@ -58,6 +59,15 @@ def main():
                 "../data/JSSP/L2D/BenchDataNmpy/tai50x15.npy",
                 "../data/JSSP/L2D/BenchDataNmpy/tai50x20.npy",
                 "../data/JSSP/L2D/BenchDataNmpy/tai100x20.npy",
+                # 8 DMU benchmarks
+                "../data/JSSP/L2D/BenchDataNmpy/dmu20x15.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu20x20.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu30x15.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu30x20.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu40x15.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu40x20.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu50x15.npy",
+                "../data/JSSP/L2D/BenchDataNmpy/dmu50x20.npy",
             ]
             runner_params["test"]["inference_type"] = ["greedy"]
 
